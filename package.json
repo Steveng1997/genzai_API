@@ -7,9 +7,10 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1013.0",
-    "@aws-sdk/lib-dynamodb": "^3.1013.0",
-    "axios": "^1.13.6",
+    "@aws-sdk/client-dynamodb": "^3.1019.0",
+    "@aws-sdk/lib-dynamodb": "^3.1019.0",
+    "aws-sdk": "^2.1693.0",
+    "axios": "^1.14.0",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
