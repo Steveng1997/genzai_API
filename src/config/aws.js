@@ -3,7 +3,7 @@ const { DynamoDBDocumentClient } = require("@aws-sdk/lib-dynamodb");
 require("dotenv").config();
 
 const client = new DynamoDBClient({
-  region: process.env.AWS_REGION,
+  region: process.env.AWS_REGION || "us-east-2",
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -11,4 +11,6 @@ const client = new DynamoDBClient({
 });
 
 const docClient = DynamoDBDocumentClient.from(client);
+
+// CRÍTICO: Exportar como objeto para que el import { docClient } funcione
 module.exports = { docClient };

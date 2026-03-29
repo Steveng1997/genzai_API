@@ -1,13 +1,6 @@
 const router = require("express").Router();
-const callController = require("../controllers/callController");
+const web = require("../controllers/webhookController");
 
-router.post("/vapi", callController.vapiWebhook);
-router.get("/meta", (req, res) => {
-  if (req.query["hub.verify_token"] === process.env.WEBHOOK_VERIFY_TOKEN) {
-    res.send(req.query["hub.challenge"]);
-  } else {
-    res.sendStatus(403);
-  }
-});
+router.post("/vapi", web.vapiWebhook);
 
 module.exports = router;

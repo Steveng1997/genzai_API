@@ -1,40 +1,59 @@
-const AWS = require("aws-sdk");
-const dynamoDB = new AWS.DynamoDB.DocumentClient();
+const dynamoDB = require("../services/dynamo");
+const { PutCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
 
-exports.confirmarTodo = async (req, res) => {
+exports.confirmPayment = async (req, res) => {
+  const {
+    email,
+    company,
+    position,
+    sellingProduct,
+    address,
+    paymentId,
+    minutes,
+    amount,
+  } = req.body;
+  const emailKey = email.toLowerCase().trim();
+  const expirationDate = new Date();
+  expirationDate.setDate(expirationDate.getDate() + 30);
+
   try {
-    const { email, plan, metodo, businessData } = req.body;
-
-    const params = {
-      TableName: process.env.USERS_TABLE_NAME || "GenzaiUsers",
-      Key: { email: email },
-      // #p es el alias para 'plan' (palabra reservada)
-      UpdateExpression:
-        "set #p = :p, metodoPago = :m, businessInfo = :bi, updatedAt = :t",
-      ConditionExpression: "attribute_exists(email)",
-      ExpressionAttributeNames: { "#p": "plan" },
-      ExpressionAttributeValues: {
-        ":p": plan,
-        ":m": metodo,
-        ":bi": {
-          role: businessData.role,
-          company: businessData.companyName,
-          industry: businessData.industry,
-          address: businessData.address,
-          isOwner: businessData.isOwner,
+    // 1. Registro en Pagos_Genzai (Key: pagold)
+    await dynamoDB.send(
+      new PutCommand({
+        TableName: "Pagos_Genzai",
+        Item: {
+          pagoId: String(paymentId),
+          email: emailKey,
+          company,
+          position,
+          sellingProduct,
+          address,
+          amount: Number(amount),
+          minutesPurchased: Number(minutes),
+          paymentDate: new Date().toISOString(),
+          expirationDate: expirationDate.toISOString(),
         },
-        ":t": new Date().toISOString(),
-      },
-    };
+      }),
+    );
 
-    await dynamoDB.update(params).promise();
-    res.status(200).json({ success: true, message: "Datos actualizados" });
+    // 2. Actualización de GenzaiUsers (Columnas en Inglés)
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: "GenzaiUsers",
+        Key: { email: emailKey },
+        UpdateExpression:
+          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v",
+        ExpressionAttributeValues: {
+          ":m": Number(minutes),
+          ":s": "active",
+          ":v": expirationDate.toISOString(),
+        },
+      }),
+    );
+
+    res.status(200).json({ success: true });
   } catch (e) {
-    if (e.code === "ConditionalCheckFailedException") {
-      return res
-        .status(404)
-        .json({ error: "El usuario no existe en la base de datos" });
-    }
-    res.status(500).json({ error: e.message });
+    console.error("Payment Error:", e);
+    res.status(500).json({ success: false, message: e.message });
   }
 };
