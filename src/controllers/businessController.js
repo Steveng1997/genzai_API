@@ -20,9 +20,9 @@ exports.confirmPayment = async (req, res) => {
     // 1. Registro en Pagos_Genzai (Key: pagold)
     await dynamoDB.send(
       new PutCommand({
-        TableName: "Pagos_Genzai",
+        TableName: "Payments",
         Item: {
-          pagoId: String(paymentId),
+          paymentId: req.body.paymentId,
           email: emailKey,
           company,
           position,
@@ -39,7 +39,7 @@ exports.confirmPayment = async (req, res) => {
     // 2. Actualización de GenzaiUsers (Columnas en Inglés)
     await dynamoDB.send(
       new UpdateCommand({
-        TableName: "GenzaiUsers",
+        TableName: "Users",
         Key: { email: emailKey },
         UpdateExpression:
           "SET availableMinutes = :m, planStatus = :s, expirationDate = :v",

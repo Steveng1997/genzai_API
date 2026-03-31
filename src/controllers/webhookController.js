@@ -29,7 +29,7 @@ exports.vapiWebhook = async (req, res) => {
     // 1. Update client status
     await dynamoDB.send(
       new UpdateCommand({
-        TableName: "ClientesRiley",
+        TableName: "Clients",
         Key: { Phone: customerPhone },
         UpdateExpression: "SET #st = :s, lastCallAt = :t",
         ExpressionAttributeNames: { "#st": "Status" },
@@ -45,7 +45,7 @@ exports.vapiWebhook = async (req, res) => {
       const emailKey = userEmail.toLowerCase().trim();
       await dynamoDB.send(
         new UpdateCommand({
-          TableName: "GenzaiUsers",
+          TableName: "Users",
           Key: { email: emailKey },
           UpdateExpression:
             "SET minutos_disponibles = minutos_disponibles - :m",

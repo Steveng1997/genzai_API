@@ -6,10 +6,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Registro de Rutas
 app.use("/api/auth", require("./src/routes/auth"));
 app.use("/api/business", require("./src/routes/business"));
 app.use("/api/webhook", require("./src/routes/webhooks"));
+app.use("/api/clients", require("./src/routes/client"));
+app.use("/api/task", require("./src/routes/task"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {

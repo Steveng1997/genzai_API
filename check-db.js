@@ -37,8 +37,8 @@ async function validarConexion() {
 
     // 2. Verificar si las tablas necesarias existen (usando tus nombres del .env)
     const tablasRequeridas = [
-      process.env.DYNAMODB_TABLE_USERS || "GenzaiUsers",
-      process.env.DYNAMODB_TABLE_LEADS || "ClientesRiley",
+      process.env.DYNAMODB_TABLE_USERS || "Users",
+      process.env.DYNAMODB_TABLE_LEADS || "Clients",
     ];
 
     console.log("\n🔎 Verificando tablas específicas:");
