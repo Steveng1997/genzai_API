@@ -13,6 +13,10 @@ app.use("/api/clients", require("./src/routes/client"));
 app.use("/api/task", require("./src/routes/task"));
 app.use("/api/ai", require("./src/routes/ai"));
 
+app.get("/", (req, res) => {
+  res.status(200).send("Genzai API is Online and Healthy!");
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Genzai API Online: http://192.168.40.7:${PORT}`);
