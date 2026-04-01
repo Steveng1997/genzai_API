@@ -11,6 +11,7 @@ app.use("/api/business", require("./src/routes/business"));
 app.use("/api/webhook", require("./src/routes/webhooks"));
 app.use("/api/clients", require("./src/routes/client"));
 app.use("/api/task", require("./src/routes/task"));
+app.use("/api/ai", require("./src/routes/ai"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {

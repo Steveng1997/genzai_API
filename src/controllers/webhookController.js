@@ -1,5 +1,6 @@
 const dynamoDB = require("../services/dynamo");
-const { UpdateCommand, PutCommand } = require("@aws-sdk/lib-dynamodb");
+const { UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+// const { sendWhatsApp } = require("../services/whatsapp"); // Asumiendo que tienes este servicio
 
 exports.vapiWebhook = async (req, res) => {
   const { message } = req.body;
@@ -17,16 +18,14 @@ exports.vapiWebhook = async (req, res) => {
     "no-answer",
     "customer-did-not-answer",
     "machine-detected",
-    "assistant-detected-voicemail",
     "rejected",
   ];
 
   try {
-    const finalStatus = failedReasons.includes(endedReason)
-      ? "Followup_Required"
-      : "Completed";
+    const isFailed = failedReasons.includes(endedReason);
+    const finalStatus = isFailed ? "Followup_Required" : "Completed";
 
-    // 1. Update client status
+    // 1. Actualizar Cliente
     await dynamoDB.send(
       new UpdateCommand({
         TableName: "Clients",
@@ -40,18 +39,25 @@ exports.vapiWebhook = async (req, res) => {
       }),
     );
 
-    // 2. Deduct minutes
+    // 2. Cobrar Minutos
     if (userEmail && durationMin > 0) {
-      const emailKey = userEmail.toLowerCase().trim();
       await dynamoDB.send(
         new UpdateCommand({
           TableName: "Users",
-          Key: { email: emailKey },
+          Key: { email: userEmail.toLowerCase().trim() },
           UpdateExpression:
             "SET minutos_disponibles = minutos_disponibles - :m",
           ExpressionAttributeValues: { ":m": durationMin },
         }),
       );
+    }
+
+    // 3. WhatsApp Automático si falla
+    if (isFailed) {
+      console.log(
+        `Llamada fallida (${endedReason}). Disparando WhatsApp a ${customerPhone}`,
+      );
+      // await sendWhatsApp(customerPhone, "Hola, intentamos llamarte pero no pudimos contactarte.");
     }
   } catch (e) {
     console.error("Webhook error:", e);

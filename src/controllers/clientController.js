@@ -5,86 +5,66 @@ const {
   DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
 
-// 1. Obtener todos los clientes
+// Obtener todos los clientes
 exports.getAllClients = async (req, res) => {
   try {
     const command = new ScanCommand({
-      // Asegúrate de actualizar tu .env a DYNAMODB_TABLE_CLIENTS=Clients
       TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
     });
     const response = await docClient.send(command);
     res.status(200).json(response.Items || []);
   } catch (error) {
-    console.error("Error fetching clients:", error);
-    res.status(500).json({ error: "Database error" });
+    res.status(500).json({ error: "Error al obtener clientes" });
   }
 };
 
-// 2. Crear o Actualizar cliente
-exports.createClient = async (req, res) => {
+// Crear o Modificar (Upsert)
+exports.saveClient = async (req, res) => {
   try {
-    const { fullName, identification, phone, city, Phone } = req.body;
+    const { fullName, identification, phone, city, createdAt } = req.body;
 
-    // Aceptamos ambos, pero priorizamos el valor numérico
-    const rawPhone = Phone || phone;
-
-    if (!rawPhone) {
-      return res.status(400).json({ error: "The 'Phone' key is required" });
-    }
-
-    // CONVERSIÓN CRÍTICA: Forzamos que sea un número para que coincida con el tipo (N) en AWS
-    const finalPhone = Number(rawPhone);
-
-    if (isNaN(finalPhone)) {
-      return res.status(400).json({ error: "Phone must be a valid number" });
-    }
+    // Validación y Conversión Crítica a Número (Tipo N en Dynamo)
+    if (!phone)
+      return res.status(400).json({ error: "El teléfono es obligatorio" });
+    const finalPhone = Number(phone);
+    if (isNaN(finalPhone))
+      return res.status(400).json({ error: "Teléfono inválido" });
 
     const clientItem = {
-      phone: finalPhone, // Clave Primaria corregida a minúscula según tu nueva tabla
+      phone: finalPhone, // Key Primaria
       fullName: fullName || "N/A",
       identification: identification || "N/A",
       city: city || "N/A",
       updatedAt: new Date().toISOString(),
+      // Si el frontend envía createdAt, lo mantenemos (Modificación), si no, es nuevo.
+      createdAt: createdAt || new Date().toISOString(),
     };
 
-    if (!req.body.updatedAt) {
-      clientItem.createdAt = new Date().toISOString();
-    }
+    await docClient.send(
+      new PutCommand({
+        TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
+        Item: clientItem,
+      }),
+    );
 
-    const command = new PutCommand({
-      TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
-      Item: clientItem,
-    });
-
-    await docClient.send(command);
-    res.status(201).json(clientItem);
+    res.status(200).json(clientItem);
   } catch (error) {
-    console.error("Error saving client:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// 3. Eliminar cliente
+// Eliminar cliente
 exports.deleteClient = async (req, res) => {
   try {
     const { phone } = req.params;
-
-    if (!phone) {
-      return res.status(400).json({ error: "Phone parameter is required" });
-    }
-
-    const command = new DeleteCommand({
-      TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
-      Key: {
-        // CONVERSIÓN CRÍTICA: El ID que viene de la URL es String, hay que pasarlo a Number
-        phone: Number(phone),
-      },
-    });
-
-    await docClient.send(command);
-    res.status(200).json({ message: "Client deleted successfully" });
+    await docClient.send(
+      new DeleteCommand({
+        TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
+        Key: { phone: Number(phone) },
+      }),
+    );
+    res.status(200).json({ message: "Eliminado" });
   } catch (error) {
-    console.error("Error deleting client:", error);
     res.status(500).json({ error: error.message });
   }
 };
