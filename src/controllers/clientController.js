@@ -21,7 +21,8 @@ exports.getAllClients = async (req, res) => {
 // Crear o Modificar (Upsert)
 exports.saveClient = async (req, res) => {
   try {
-    const { fullName, identification, phone, city, createdAt } = req.body;
+    const { fullName, identification, phone, city, createdAt, call_active } =
+      req.body;
 
     // Validación y Conversión Crítica a Número (Tipo N en Dynamo)
     if (!phone)
@@ -35,8 +36,8 @@ exports.saveClient = async (req, res) => {
       fullName: fullName || "N/A",
       identification: identification || "N/A",
       city: city || "N/A",
+      call_active: call_active !== undefined ? call_active : true,
       updatedAt: new Date().toISOString(),
-      // Si el frontend envía createdAt, lo mantenemos (Modificación), si no, es nuevo.
       createdAt: createdAt || new Date().toISOString(),
     };
 
