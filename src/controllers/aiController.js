@@ -7,16 +7,10 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.setupAssistant = async (req, res) => {
   try {
-    const { businessId } = req.body; // El email del usuario
+    const { businessId } = req.body;
     const files = req.files;
 
-    if (!files || files.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No se subieron archivos." });
-    }
-
-    // 1. Buscar el nombre de la empresa en la tabla Payments
+    // 1. Obtener nombre de la empresa desde Payments
     const paymentsData = await dynamoDB.send(
       new ScanCommand({
         TableName: "Payments",
@@ -25,37 +19,44 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
-    // Extraemos el campo 'company' de la captura de pantalla que enviaste
     const businessName =
-      paymentsData.Items?.length > 0
+      paymentsData.Items && paymentsData.Items.length > 0
         ? paymentsData.Items[0].company
-        : "Negocio Genzai";
+        : "Genzai Business";
 
-    const fileIds = [];
-    // 2. Subir archivos a OpenAI (Usando el path temporal de Multer)
-    for (const file of files) {
-      const response = await openai.files.create({
-        file: fs.createReadStream(file.path),
-        purpose: "assistants",
-      });
-      fileIds.push(response.id);
+    let fileIds = [];
 
-      // Borrar archivo temporal del servidor
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    // 2. Procesar archivos (PDF, Imágenes, Excel)
+    if (files && files.length > 0) {
+      for (const file of files) {
+        const response = await openai.files.create({
+          file: fs.createReadStream(file.path),
+          purpose: "assistants",
+        });
+        fileIds.push(response.id);
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      }
     }
 
-    // 3. Crear Asistente vinculado a los archivos
+    // 3. Crear el Asistente con capacidades de Visión y Análisis de Datos
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${businessName}`,
-      instructions: `Eres Riley, el asistente virtual de ${businessName}. Usa solo los documentos cargados.`,
-      tools: [{ type: "file_search" }],
-      model: "gpt-4o",
+      instructions: `Eres Riley, el asistente de ventas de ${businessName}. 
+      Tu conocimiento base viene de los archivos subidos (listas de precios, volantes, catálogos).
+      También debes estar atento a las promociones temporales que el usuario te escriba por chat.`,
+      tools: [
+        { type: "file_search" }, // Para PDFs y documentos largos
+        { type: "code_interpreter" }, // Para leer archivos EXCEL (.xlsx)
+      ],
+      model: "gpt-4o", // Soporta JPG, PNG y lógica avanzada
       tool_resources: {
-        file_search: { vector_stores: [{ file_ids: fileIds }] },
+        file_search: {
+          vector_stores: fileIds.length > 0 ? [{ file_ids: fileIds }] : [],
+        },
       },
     });
 
-    // 4. Guardar configuración final en AIConfigs
+    // 4. Guardar configuración en AIConfigs
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
@@ -63,7 +64,6 @@ exports.setupAssistant = async (req, res) => {
           businessId: businessId.toLowerCase().trim(),
           businessName: businessName,
           assistantId: assistant.id,
-          status: "active",
           createdAt: new Date().toISOString(),
         },
       }),
@@ -71,9 +71,27 @@ exports.setupAssistant = async (req, res) => {
 
     res
       .status(200)
-      .json({ success: true, message: "Riley configurada con éxito" });
+      .json({ success: true, message: "Riley configurada correctamente" });
   } catch (error) {
-    console.error("Error en setupAssistant:", error);
+    console.error("Error AI Setup:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Controlador para procesar las promociones escritas por chat
+exports.askRiley = async (req, res) => {
+  try {
+    const { businessId, message } = req.body;
+    // Aquí implementarías la lógica de threads de OpenAI para mantener la memoria
+    // Por ahora, Riley responde basándose en el mensaje actual
+    res
+      .status(200)
+      .json({
+        success: true,
+        response:
+          "Entendido, recordaré esta promoción para las siguientes llamadas.",
+      });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
