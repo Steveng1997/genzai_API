@@ -1,44 +1,62 @@
 const dynamoDB = require("../services/dynamo");
-const { GetCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+const {
+  GetCommand,
+  UpdateCommand,
+  QueryCommand,
+} = require("@aws-sdk/lib-dynamodb");
 
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
-  const normalizedEmail = email.toLowerCase().trim();
+  const { email: identifier, password } = req.body;
+  if (!identifier)
+    return res.status(400).json({ message: "Identificador requerido" });
+
+  const cleanId = identifier.toLowerCase().trim();
 
   try {
-    const result = await dynamoDB.send(
+    let user = null;
+
+    // 1. Intento por Email (PK)
+    const byEmail = await dynamoDB.send(
       new GetCommand({
         TableName: "Users",
-        Key: { email: normalizedEmail },
+        Key: { email: cleanId },
       }),
     );
+    user = byEmail.Item;
 
-    // 1. Verificar si el usuario existe en la tabla
-    if (!result.Item) {
+    // 2. Intento por Username (GSI) si no se encontró por email
+    if (!user) {
+      const byUser = await dynamoDB.send(
+        new QueryCommand({
+          TableName: "Users",
+          IndexName: "username-index",
+          KeyConditionExpression: "username = :u",
+          ExpressionAttributeValues: { ":u": cleanId },
+        }),
+      );
+      if (byUser.Items?.length > 0) user = byUser.Items[0];
+    }
+
+    if (!user)
       return res.status(404).json({ message: "Usuario no encontrado" });
-    }
 
-    const user = result.Item;
-
-    // 2. Verificar si el usuario ya completó su registro (tiene password)
+    // 3. Flujo de validación
     if (!user.password) {
-      return res.status(200).json({ status: "NEED_REGISTER", user });
+      return res
+        .status(200)
+        .json({ status: "NEED_REGISTER", email: user.email });
     }
 
-    // 3. Si existe pero no se envió el password desde Flutter, pedirlo
     if (!password) {
-      return res.status(200).json({
-        status: "NEED_PASSWORD",
-        message: "Usuario encontrado, ingrese su clave",
-      });
+      return res
+        .status(200)
+        .json({ status: "NEED_PASSWORD", message: "Ingrese clave" });
     }
 
-    // 4. Validar contraseña
     if (user.password !== password) {
       return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
-    // 5. Login exitoso
     res.status(200).json({ status: "OK", user });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -47,20 +65,18 @@ exports.login = async (req, res) => {
 
 exports.completeProfile = async (req, res) => {
   const { email, fullName, username, phoneNumber, password } = req.body;
-  const normalizedEmail = email.toLowerCase().trim();
-
   try {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: "Users",
-        Key: { email: normalizedEmail },
+        Key: { email: email.toLowerCase().trim() },
         UpdateExpression:
           "SET fullName = :fn, username = :un, phoneNumber = :pn, password = :pw",
         ExpressionAttributeValues: {
           ":fn": fullName,
-          ":un": username,
+          ":un": username.toLowerCase().trim(),
           ":pn": phoneNumber,
-          ":pw": password, // Se guarda estrictamente como 'password'
+          ":pw": password,
         },
       }),
     );
