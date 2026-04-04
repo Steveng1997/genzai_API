@@ -7,48 +7,63 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.setupAssistant = async (req, res) => {
   try {
-    const { businessId, businessName } = req.body; // businessId es el email
+    const { businessId, businessName } = req.body;
     const files = req.files;
 
     if (!files || files.length === 0) {
-      return res.status(400).json({ message: "No se subieron archivos." });
+      return res
+        .status(400)
+        .json({ success: false, message: "No se recibieron archivos." });
     }
 
-    // 1. Subir archivos a OpenAI
     const fileIds = [];
+
+    // 1. Subir archivos a OpenAI
     for (const file of files) {
+      // Usamos el path que Multer generó en la carpeta 'uploads'
       const response = await openai.files.create({
         file: fs.createReadStream(file.path),
         purpose: "assistants",
       });
+
       fileIds.push(response.id);
-      // Borrado seguro del archivo temporal
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+
+      // Borrar archivo temporal después de subirlo a OpenAI
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
     }
 
-    // 2. Crear Vector Store y Asistente
+    // 2. Crear el Asistente con File Search
+    // Nota: Para mejores resultados, OpenAI recomienda crear un Vector Store primero,
+    // pero esta forma directa también funciona.
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${businessName}`,
-      instructions: `Eres Riley, el asistente virtual oficial de ${businessName}. 
-      Tu conocimiento proviene exclusivamente de los documentos cargados. 
-      Responde de forma amable y profesional.`,
+      instructions: `Eres Riley, la experta en ventas de ${businessName}. Tu conocimiento se basa en los documentos cargados.`,
       tools: [{ type: "file_search" }],
-      model: "gpt-4-turbo",
+      model: "gpt-4o", // O gpt-4-turbo
       tool_resources: {
-        file_search: { vector_stores: [{ file_ids: fileIds }] },
+        file_search: {
+          vector_stores: [
+            {
+              file_ids: fileIds,
+            },
+          ],
+        },
       },
     });
 
-    // 3. Guardar configuración en DynamoDB (Tabla AIConfigs)
+    // 3. Guardar en DynamoDB (IMPORTANTE para la función de llamada posterior)
+    const bId = businessId.toLowerCase().trim();
+
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
         Item: {
-          businessId: businessId.toLowerCase().trim(),
+          businessId: bId,
+          assistantId: assistant.id, // Este es el ID que busca el callController
           businessName: businessName,
-          assistantId: assistant.id,
           fileIds: fileIds,
-          status: "active",
           createdAt: new Date().toISOString(),
         },
       }),
@@ -57,10 +72,16 @@ exports.setupAssistant = async (req, res) => {
     res.status(200).json({
       success: true,
       assistantId: assistant.id,
-      message: "Riley configurado y vinculado con éxito",
+      message: "Riley configurada con éxito",
     });
   } catch (error) {
     console.error("Error en setupAssistant:", error);
-    res.status(500).json({ error: error.message });
+    // Limpieza de archivos si hubo error
+    if (req.files) {
+      req.files.forEach((f) => {
+        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+      });
+    }
+    res.status(500).json({ success: false, message: error.message });
   }
 };
