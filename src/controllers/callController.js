@@ -1,81 +1,65 @@
 const axios = require("axios");
-const { QueryCommand, GetCommand } = require("@aws-sdk/lib-dynamodb");
+const { GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
 exports.makeSmartCall = async (req, res) => {
   try {
-    const { businessId } = req.body;
+    const { phone } = req.body; // Ahora buscamos por teléfono del cliente
 
-    // 1. Obtener la configuración de la IA (el ID del asistente Riley)
-    const aiConfig = await dynamoDB.send(
+    // 1. Buscar al cliente en la tabla Clients por su phone (Partition Key)
+    const clientData = await dynamoDB.send(
       new GetCommand({
-        TableName: "AIConfigs",
-        Key: { businessId: businessId.toLowerCase().trim() },
+        TableName: "Clients",
+        Key: { phone: Number(phone) }, // En tu captura el phone es Número
       }),
     );
 
-    if (!aiConfig.Item || !aiConfig.Item.assistantId) {
+    if (!clientData.Item) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Cliente no encontrado" });
+    }
+
+    const client = clientData.Item;
+    // Asumimos que en la tabla Clients guardas a qué categoría pertenece (ej: "Autos")
+    const category = client.interestCategory || "Autos";
+
+    // 2. Buscar la configuración de Riley para esa categoría (Autos, Ropa, etc)
+    const aiConfig = await dynamoDB.send(
+      new GetCommand({
+        TableName: "AIConfigs",
+        Key: { businessId: category },
+      }),
+    );
+
+    if (!aiConfig.Item) {
       return res
         .status(404)
         .json({
           success: false,
-          message: "Debes configurar a Riley con un PDF o instrucción primero.",
+          message: `No hay una IA configurada para ${category}`,
         });
     }
 
-    // 2. Obtener clientes habilitados para este negocio
-    const clientsData = await dynamoDB.send(
-      new QueryCommand({
-        TableName: "Clients",
-        KeyConditionExpression: "businessId = :bid",
-        FilterExpression: "isEnabled = :enabled",
-        ExpressionAttributeValues: { ":bid": businessId, ":enabled": true },
-      }),
+    // 3. Ejecutar llamada con el asistente específico del nicho
+    await axios.post(
+      "https://api.vapi.ai/call/phone",
+      {
+        customer: {
+          number: client.phone.toString(),
+          name: client.fullName,
+        },
+        assistantId: aiConfig.Item.assistantId,
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.VAPI_PRIVATE_KEY}` },
+      },
     );
 
-    const clients = clientsData.Items || [];
-    if (clients.length === 0) {
-      return res
-        .status(200)
-        .json({
-          success: false,
-          message: "No hay clientes marcados para llamar.",
-        });
-    }
-
-    // 3. Lanzar llamadas a través de Vapi
-    let callsSent = 0;
-    for (const client of clients) {
-      const phoneNumber = client.Celular || client.phone;
-      if (phoneNumber) {
-        await axios.post(
-          "https://api.vapi.ai/call/phone",
-          {
-            customer: {
-              number: phoneNumber,
-              name: client.nombre || "Cliente",
-            },
-            assistantId: aiConfig.Item.assistantId, // ID que creamos en aiController
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.VAPI_PRIVATE_KEY}`,
-            },
-          },
-        );
-        callsSent++;
-      }
-    }
-
-    res.status(200).json({ success: true, count: callsSent });
+    res
+      .status(200)
+      .json({ success: true, message: `Llamada de ${category} iniciada` });
   } catch (error) {
-    console.error("Error en makeSmartCall:", error);
     res.status(500).json({ success: false, message: error.message });
   }
-};
-
-exports.vapiWebhook = async (req, res) => {
-  // Para recibir el resumen de la llamada (análisis de sentimientos, si compró, etc.)
-  console.log("Webhook de Vapi recibido:", req.body);
-  res.status(200).send("OK");
 };

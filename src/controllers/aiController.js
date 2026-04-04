@@ -7,27 +7,33 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.setupAssistant = async (req, res) => {
   try {
-    const { businessId } = req.body;
+    const { email } = req.body; // Recibimos el email del programador/dueño
     const files = req.files || [];
 
-    if (!businessId)
-      return res
-        .status(400)
-        .json({ success: false, message: "Falta email/businessId" });
-
-    // 1. Buscar el nombre de la empresa en Payments (como en tu captura)
+    // 1. Buscamos en Payments para obtener el producto y la empresa
     const paymentsData = await dynamoDB.send(
       new ScanCommand({
         TableName: "Payments",
         FilterExpression: "email = :e",
-        ExpressionAttributeValues: { ":e": businessId.toLowerCase().trim() },
+        ExpressionAttributeValues: { ":e": email.toLowerCase().trim() },
       }),
     );
 
-    const businessName =
-      paymentsData.Items && paymentsData.Items.length > 0
-        ? paymentsData.Items[0].company
-        : "Negocio Genzai";
+    if (!paymentsData.Items || paymentsData.Items.length === 0) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No se encontró suscripción para este email",
+        });
+    }
+
+    const subscription = paymentsData.Items[0];
+    const productKey = subscription.sellingProduct; // Ejemplo: "Autos"
+    const companyName = subscription.company; // Ejemplo: "Genzai"
+
+    // Creamos un nombre descriptivo para el asistente
+    const displayName = `${companyName} - ${productKey}`;
 
     // 2. Subir archivos a OpenAI
     let fileIds = [];
@@ -40,25 +46,25 @@ exports.setupAssistant = async (req, res) => {
       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
 
-    // 3. Crear Asistente GPT-4o (Soporta Visión y Excel)
+    // 3. Crear Asistente con contexto de NICHO
     const assistant = await openai.beta.assistants.create({
-      name: `Riley - ${businessName}`,
-      instructions: `Eres Riley, el asistente de ventas de ${businessName}. Tu objetivo es contactar clientes y ofrecer promociones basadas en los archivos y datos proporcionados. Sé amable y profesional.`,
+      name: `Riley (${displayName})`,
+      instructions: `Eres Riley, especialista de ventas en el sector de ${productKey} para la empresa ${companyName}. 
+      Tu objetivo es ser un experto en ${productKey}. Usa los archivos para conocer el inventario y precios.`,
       tools: [{ type: "file_search" }, { type: "code_interpreter" }],
       model: "gpt-4o",
-      tool_resources: {
-        file_search: { vector_stores: [] }, // Opcional: podrías crear un vector store persistente
-      },
     });
 
-    // 4. Guardar en AIConfigs para que CallController sepa qué ID usar
+    // 4. Guardar en AIConfigs usando el PRODUCTO como ID
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
         Item: {
-          businessId: businessId.toLowerCase().trim(),
+          businessId: productKey, // AHORA ES "Autos", NO "steven_dev"
           assistantId: assistant.id,
-          businessName: businessName,
+          businessName: displayName,
+          company: companyName,
+          category: productKey,
           status: "active",
           createdAt: new Date().toISOString(),
         },
@@ -67,23 +73,8 @@ exports.setupAssistant = async (req, res) => {
 
     res
       .status(200)
-      .json({
-        success: true,
-        message: "Riley configurada con éxito",
-        assistantId: assistant.id,
-      });
+      .json({ success: true, message: `Riley entrenada para ${productKey}` });
   } catch (error) {
-    console.error("Error en setupAssistant:", error);
     res.status(500).json({ success: false, message: error.message });
   }
-};
-
-exports.askRiley = async (req, res) => {
-  // Lógica para procesar mensajes directos si deseas chatear con ella en la app
-  res
-    .status(200)
-    .json({
-      success: true,
-      response: "Recibido. Aplicaré esta instrucción en las llamadas.",
-    });
 };
