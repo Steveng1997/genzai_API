@@ -1,27 +1,17 @@
 const axios = require("axios");
-const { GetCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+const {
+  QueryCommand,
+  GetCommand,
+  UpdateCommand,
+} = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-// 1. DISPARAR LA LLAMADA TELEFÓNICA
+// --- INICIAR LLAMADAS A CLIENTES HABILITADOS ---
 exports.makeSmartCall = async (req, res) => {
   try {
-    const { businessId, clientId } = req.body;
+    const { businessId } = req.body;
 
-    // Buscamos al cliente en DynamoDB
-    const clientData = await dynamoDB.send(
-      new GetCommand({
-        TableName: "Clients",
-        Key: { businessId: businessId, clientId: clientId },
-      }),
-    );
-
-    if (!clientData.Item || !clientData.Item.phone) {
-      return res
-        .status(404)
-        .json({ message: "Cliente o teléfono no encontrado" });
-    }
-
-    // Buscamos la configuración de Riley para ese negocio
+    // 1. Obtener el AssistantId configurado para este negocio
     const config = await dynamoDB.send(
       new GetCommand({
         TableName: "AIConfigs",
@@ -29,78 +19,103 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    if (!config.Item || !config.Item.assistantId) {
+    if (!config.Item?.assistantId) {
       return res
         .status(404)
-        .json({ message: "Riley no está configurado (Faltan PDFs)" });
+        .json({
+          success: false,
+          message: "Riley no configurada para este negocio.",
+        });
     }
 
-    // Llamada saliente vía Vapi API
-    const vapiResponse = await axios.post(
-      "https://api.vapi.ai/call/phone",
-      {
-        customer: {
-          number: clientData.Item.phone,
-          name: clientData.Item.name || "Cliente GNA",
+    // 2. Buscar solo clientes con el check activo (isEnabled === true)
+    const clientsData = await dynamoDB.send(
+      new QueryCommand({
+        TableName: "Clients",
+        KeyConditionExpression: "businessId = :bid",
+        FilterExpression: "isEnabled = :checked",
+        ExpressionAttributeValues: {
+          ":bid": businessId,
+          ":checked": true,
         },
-        assistantId: config.Item.assistantId,
-        phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID, // ID del número comprado en Vapi
-      },
-      {
-        headers: { Authorization: `Bearer ${process.env.VAPI_PRIVATE_KEY}` },
-      },
+      }),
     );
 
-    res.status(200).json({
-      success: true,
-      callId: vapiResponse.data.id,
-    });
+    const activeClients = clientsData.Items || [];
+
+    if (activeClients.length === 0) {
+      return res
+        .status(200)
+        .json({
+          success: false,
+          message: "No hay clientes seleccionados en la lista.",
+        });
+    }
+
+    // 3. Lanzar llamadas vía Vapi
+    let callsCount = 0;
+    for (const client of activeClients) {
+      const phone = client.phone || client.Phone || client.Celular; // Mapeo según tu captura
+      if (phone) {
+        try {
+          await axios.post(
+            "https://api.vapi.ai/call/phone",
+            {
+              customer: { number: phone, name: client.nombre || "Cliente" },
+              assistantId: config.Item.assistantId,
+              phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.VAPI_PRIVATE_KEY}`,
+              },
+            },
+          );
+          callsCount++;
+        } catch (err) {
+          console.error(`Error al llamar a ${phone}:`, err.message);
+        }
+      }
+    }
+
+    res.status(200).json({ success: true, count: callsCount });
   } catch (error) {
-    console.error("Error en Vapi:", error.response?.data || error.message);
-    res.status(500).json({ error: "Error al conectar con Vapi" });
+    console.error("Error en makeSmartCall:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
   }
 };
 
-// 2. WEBHOOK PARA REPORTE FINAL Y COBRO DE MINUTOS
+// --- RECIBIR RESULTADOS DE VAPI (WEBHOOK) ---
 exports.vapiWebhook = async (req, res) => {
   const { message } = req.body;
+
+  // Solo procesamos cuando la llamada termina
   if (message?.type !== "end-of-call-report") return res.sendStatus(200);
 
   const customerPhone = message.customer?.number;
   const durationMin = parseFloat(
     ((message.durationSeconds || 0) / 60).toFixed(2),
   );
-  // Asegúrate de que el asistente envíe esta variable o búscala en tu DB
   const userEmail =
-    message.assistant?.variableValues?.userEmail || "steven@example.com";
-  const endedReason = message.endedReason;
-
-  const failedReasons = [
-    "voicemail",
-    "no-answer",
-    "customer-did-not-answer",
-    "rejected",
-  ];
+    message.assistant?.variableValues?.userEmail || "admin@genzai.com";
 
   try {
-    const isFailed = failedReasons.includes(endedReason);
-    const finalStatus = isFailed ? "Followup_Required" : "Completed";
-
-    // Actualizar estado del cliente
+    // 1. Actualizar estado del cliente en la tabla
     await dynamoDB.send(
       new UpdateCommand({
         TableName: "Clients",
-        Key: { Phone: customerPhone }, // Verifica si tu PK es 'Phone' o 'clientId'
-        UpdateExpression: "SET #st = :s, lastCallAt = :t",
-        ExpressionAttributeNames: { "#st": "Status" },
+        Key: { Phone: customerPhone },
+        UpdateExpression: "SET lastCallStatus = :s, lastCallAt = :t",
         ExpressionAttributeValues: {
-          ":s": finalStatus,
+          ":s": message.endedReason,
           ":t": new Date().toISOString(),
         },
       }),
     );
 
-    // Descontar minutos del usuario
+    // 2. Cobrar minutos al usuario si la llamada fue efectiva
     if (durationMin > 0) {
       await dynamoDB.send(
         new UpdateCommand({
@@ -113,7 +128,8 @@ exports.vapiWebhook = async (req, res) => {
       );
     }
   } catch (e) {
-    console.error("Webhook error:", e);
+    console.error("Error procesando Webhook:", e);
   }
+
   res.sendStatus(200);
 };

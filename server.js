@@ -8,10 +8,10 @@ app.use(express.json());
 
 app.use("/api/auth", require("./src/routes/auth"));
 app.use("/api/business", require("./src/routes/business"));
-app.use("/api/webhook", require("./src/routes/webhooks"));
 app.use("/api/clients", require("./src/routes/client"));
 app.use("/api/task", require("./src/routes/task"));
 app.use("/api/ai", require("./src/routes/ai"));
+app.use("/api/call", require("./src/routes/call"));
 
 app.get("/", (req, res) => {
   res.status(200).send("Genzai API is Online and Healthy!");
