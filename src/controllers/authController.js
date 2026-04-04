@@ -15,7 +15,7 @@ exports.login = async (req, res) => {
   try {
     let user = null;
 
-    // 1. Intento por Email (PK)
+    // 1. Buscar por Email (Primary Key)
     const byEmail = await dynamoDB.send(
       new GetCommand({
         TableName: "Users",
@@ -24,12 +24,12 @@ exports.login = async (req, res) => {
     );
     user = byEmail.Item;
 
-    // 2. Intento por Username (GSI) si no se encontró por email
+    // 2. Buscar por Username (GSI) si no se encontró por email
     if (!user) {
       const byUser = await dynamoDB.send(
         new QueryCommand({
           TableName: "Users",
-          IndexName: "username-index",
+          IndexName: "username-index", // Asegúrate de que el GSI se llame así en AWS
           KeyConditionExpression: "username = :u",
           ExpressionAttributeValues: { ":u": cleanId },
         }),
@@ -37,26 +37,34 @@ exports.login = async (req, res) => {
       if (byUser.Items?.length > 0) user = byUser.Items[0];
     }
 
-    if (!user)
-      return res.status(404).json({ message: "Usuario no encontrado" });
+    // 3. Si no existe en absoluto
+    if (!user) {
+      return res
+        .status(404)
+        .json({
+          message: "El usuario o correo no existe. Por favor regístrate.",
+        });
+    }
 
-    // 3. Flujo de validación
+    // 4. Flujo: Existe pero no tiene contraseña (Registro incompleto)
     if (!user.password) {
-      return res
-        .status(200)
-        .json({ status: "NEED_REGISTER", email: user.email });
+      return res.status(200).json({
+        status: "NEED_REGISTER",
+        email: user.email, // Importante: mandamos el email real para el registro
+      });
     }
 
+    // 5. Existe y tiene contraseña, pero no la envió (Paso 1 del Login)
     if (!password) {
-      return res
-        .status(200)
-        .json({ status: "NEED_PASSWORD", message: "Ingrese clave" });
+      return res.status(200).json({ status: "NEED_PASSWORD" });
     }
 
+    // 6. Validación final de contraseña
     if (user.password !== password) {
       return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
+    // Login Exitoso
     res.status(200).json({ status: "OK", user });
   } catch (e) {
     res.status(500).json({ error: e.message });
