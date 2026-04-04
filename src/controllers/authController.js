@@ -10,61 +10,55 @@ exports.login = async (req, res) => {
   if (!identifier)
     return res.status(400).json({ message: "Identificador requerido" });
 
-  const cleanId = identifier.toLowerCase().trim();
+  const trimmedId = identifier.trim();
 
   try {
     let user = null;
 
-    // 1. Buscar por Email (Primary Key)
+    // 1. Buscar por Email (PK) - Forzamos minúsculas porque los correos suelen ser así
     const byEmail = await dynamoDB.send(
       new GetCommand({
         TableName: "Users",
-        Key: { email: cleanId },
+        Key: { email: trimmedId.toLowerCase() },
       }),
     );
     user = byEmail.Item;
 
-    // 2. Buscar por Username (GSI) si no se encontró por email
+    // 2. Buscar por Username (GSI) - NO usar toLowerCase() aquí
     if (!user) {
       const byUser = await dynamoDB.send(
         new QueryCommand({
           TableName: "Users",
-          IndexName: "username-index", // Asegúrate de que el GSI se llame así en AWS
+          IndexName: "username-index",
           KeyConditionExpression: "username = :u",
-          ExpressionAttributeValues: { ":u": cleanId },
+          ExpressionAttributeValues: { ":u": trimmedId }, // Buscamos "StevenG" tal cual
         }),
       );
       if (byUser.Items?.length > 0) user = byUser.Items[0];
     }
 
-    // 3. Si no existe en absoluto
+    // 3. Validación de existencia
     if (!user) {
-      return res
-        .status(404)
-        .json({
-          message: "El usuario o correo no existe. Por favor regístrate.",
-        });
-    }
-
-    // 4. Flujo: Existe pero no tiene contraseña (Registro incompleto)
-    if (!user.password) {
-      return res.status(200).json({
-        status: "NEED_REGISTER",
-        email: user.email, // Importante: mandamos el email real para el registro
+      return res.status(404).json({
+        message: "El usuario o correo no existe. Por favor regístrate.",
       });
     }
 
-    // 5. Existe y tiene contraseña, pero no la envió (Paso 1 del Login)
+    // ... resto de tu lógica de password ( NEED_REGISTER, NEED_PASSWORD, OK )
+    if (!user.password) {
+      return res
+        .status(200)
+        .json({ status: "NEED_REGISTER", email: user.email });
+    }
+
     if (!password) {
       return res.status(200).json({ status: "NEED_PASSWORD" });
     }
 
-    // 6. Validación final de contraseña
     if (user.password !== password) {
       return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
-    // Login Exitoso
     res.status(200).json({ status: "OK", user });
   } catch (e) {
     res.status(500).json({ error: e.message });
