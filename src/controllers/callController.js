@@ -10,7 +10,7 @@ exports.makeSmartCall = async (req, res) => {
     );
     const userConfig = configs.Items.find((i) => i.ownerEmail === email);
 
-    // IDs CORREGIDOS SEGÚN TUS CAPTURAS
+    // IDs de tus capturas
     const assistantId = "4c266662-68db-4046-a13f-8c021c84919c";
     const phoneId = "59d1cef7-80b8-4dfa-9a14-1394df3bc97a";
     const product = userConfig?.businessName || "autos";
@@ -43,13 +43,13 @@ exports.makeSmartCall = async (req, res) => {
           );
         } catch (err) {
           console.error(
-            `❌ Error en ${cleanPhone}:`,
+            `❌ Error en llamada:`,
             err.response?.data || err.message,
           );
         }
       }
     }
-    res.status(200).json({ success: true, message: "Campaña iniciada" });
+    res.status(200).json({ success: true, message: "Llamadas en curso" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

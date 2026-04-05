@@ -31,7 +31,7 @@ exports.setupAssistant = async (req, res) => {
         Item: {
           businessId: business.company.toLowerCase().replace(/ /g, "_"),
           ownerEmail: email,
-          assistantId: "4c266662-68db-4046-a13f-8c021c84919c", // UUID real de Vapi
+          assistantId: "4c266662-68db-4046-a13f-8c021c84919c", // UUID real
           openaiAssistantId: assistant.id,
           businessName: product,
           updatedAt: new Date().toISOString(),
