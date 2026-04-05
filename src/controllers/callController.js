@@ -1,5 +1,8 @@
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, GetCommand } = require("@aws-sdk/lib-dynamodb");
+const {
+  DynamoDBDocumentClient,
+  ScanCommand,
+} = require("@aws-sdk/lib-dynamodb");
 
 const client = new DynamoDBClient({
   region: process.env.AWS_REGION || "us-east-2",
@@ -8,40 +11,50 @@ const ddbDocClient = DynamoDBDocumentClient.from(client);
 
 exports.makeSmartCall = async (req, res) => {
   try {
-    const { phone, businessId } = req.body;
+    const { businessId } = req.body;
 
-    if (!phone)
-      return res
-        .status(400)
-        .json({ success: false, message: "Número requerido" });
-
-    // Limpieza dinámica: dejamos solo números y añadimos 57 si falta
-    let cleanPhone = phone.toString().replace(/\D/g, "");
-    if (cleanPhone.length === 10) cleanPhone = "57" + cleanPhone;
-
+    // 1. Escaneamos TODA la tabla de clientes configurada en App Runner
     const params = {
-      TableName: process.env.DYNAMODB_TABLE_LEADS, // Variable de tu App Runner
-      Key: { phone: Number(cleanPhone) }, // (N) en tu DynamoDB
+      TableName: process.env.DYNAMODB_TABLE_LEADS,
     };
 
-    const { Item } = await ddbDocClient.send(new GetCommand(params));
+    const { Items } = await ddbDocClient.send(new ScanCommand(params));
 
-    if (!Item) {
+    if (!Items || Items.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `El cliente ${cleanPhone} no existe en la base de datos.`,
+        message: "No hay clientes en la tabla para iniciar la campaña.",
       });
     }
 
-    // Lógica de éxito
+    console.log(`🚀 Iniciando campaña masiva para ${Items.length} clientes...`);
+
+    // 2. Procesamos las llamadas (Lógica asíncrona para no bloquear el servidor)
+    Items.forEach(async (cliente) => {
+      const telefono = cliente.phone;
+      const nombre = cliente.fullName || "Cliente";
+
+      try {
+        // AQUÍ LLAMAS A TU FUNCIÓN DE RILEY / VAPI
+        console.log(`📞 Llamando a ${nombre} al número: ${telefono}`);
+        // await vapi.startCall(telefono, ...);
+      } catch (err) {
+        console.error(`❌ Error llamando a ${telefono}:`, err.message);
+      }
+    });
+
+    // 3. Respondemos de inmediato al App que la campaña arrancó
     return res.status(200).json({
       success: true,
-      message: `Llamada iniciada para ${Item.fullName || "el cliente"}`,
+      message: `Campaña iniciada para ${Items.length} clientes correctamente.`,
     });
   } catch (error) {
-    console.error(error);
+    console.error("❌ Error en Campaña Masiva:", error);
     res
       .status(500)
-      .json({ success: false, message: "Error interno del servidor" });
+      .json({
+        success: false,
+        message: "Error al procesar la campaña masiva.",
+      });
   }
 };
