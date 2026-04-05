@@ -9,7 +9,7 @@ exports.makeSmartCall = async (req, res) => {
     if (!phone)
       return res
         .status(400)
-        .json({ message: "Teléfono del cliente requerido" });
+        .json({ message: "Teléfono del cliente es requerido" });
 
     // 1. Obtener datos del cliente (Partition Key: phone como Número)
     const clientRes = await dynamoDB.send(
@@ -20,15 +20,13 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!clientRes.Item)
-      return res
-        .status(404)
-        .json({ message: "Cliente no encontrado en la base de datos" });
+      return res.status(404).json({ message: "Cliente no encontrado" });
 
     const client = clientRes.Item;
-    // El cliente debe tener asignado qué producto le interesa
+    // El campo sellingProduct en el Cliente nos dice qué Riley usar
     const productCategory = client.sellingProduct;
 
-    // 2. Buscar la configuración de la IA para ese producto específico
+    // 2. Buscar la Riley activa para esa categoría específica
     const aiConfig = await dynamoDB.send(
       new GetCommand({
         TableName: "AIConfigs",
@@ -40,11 +38,11 @@ exports.makeSmartCall = async (req, res) => {
       return res
         .status(404)
         .json({
-          message: `No hay una Riley configurada para el nicho: ${productCategory}`,
+          message: `No hay una IA configurada para: ${productCategory}`,
         });
     }
 
-    // 3. Disparar llamada con Vapi usando el AssistantId dinámico
+    // 3. Disparar llamada con Vapi
     await axios.post(
       "https://api.vapi.ai/call/phone",
       {
@@ -59,10 +57,10 @@ exports.makeSmartCall = async (req, res) => {
       },
     );
 
-    res
-      .status(200)
-      .json({ success: true, message: "Campaña iniciada para este cliente" });
+    res.status(200).json({ success: true, message: "Llamada iniciada" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.vapiWebhook = (req, res) => res.status(200).send("OK");
