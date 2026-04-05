@@ -5,57 +5,35 @@ const fs = require("fs");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-exports.setupAssistant = async (req, res) => {
+const setupAssistant = async (req, res) => {
   try {
     const rawEmail = req.body.email || req.body.businessId;
-
-    if (!rawEmail) {
+    if (!rawEmail)
       return res
         .status(400)
-        .json({ success: false, message: "No llegó el email al servidor" });
-    }
+        .json({ success: false, message: "Email requerido" });
 
     const emailToSearch = rawEmail.toLowerCase().trim();
-    console.log("===> PASO 1: Iniciando búsqueda para:", emailToSearch);
 
-    // 1. Traemos TODOS los registros de Payments para buscar manualmente
-    // Esto es para depuración; si hay pocos registros, es infalible.
+    // 1. Buscar en la tabla Payments
     const allPayments = await dynamoDB.send(
-      new ScanCommand({
-        TableName: "Payments",
-      }),
+      new ScanCommand({ TableName: "Payments" }),
     );
-
-    console.log(
-      `===> PASO 2: Total registros en tabla Payments: ${allPayments.Items.length}`,
+    const business = allPayments.Items.find(
+      (item) => (item.email || "").toLowerCase().trim() === emailToSearch,
     );
-
-    // Buscamos el registro que coincida con el email
-    const business = allPayments.Items.find((item) => {
-      const dbEmail = (item.email || "").toLowerCase().trim();
-      return dbEmail === emailToSearch;
-    });
 
     if (!business) {
-      // Si no lo encuentra, imprimimos qué emails SÍ hay en la tabla para comparar
-      const existingEmails = allPayments.Items.map((i) => i.email).join(", ");
-      console.log(
-        "===> PASO 3: No se encontró el email. Emails en la tabla:",
-        existingEmails,
-      );
-
-      return res.status(404).json({
-        success: false,
-        message: `Suscripción no encontrada para ${emailToSearch}. En la tabla hay: ${existingEmails}`,
-      });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: `No se encontró suscripción para ${emailToSearch}`,
+        });
     }
 
-    // Si llegamos aquí, lo encontramos
     const category = business.sellingProduct || "General";
-    const company = business.company || "Negocio Genzai";
-    console.log(
-      `===> PASO 4: Match encontrado! Empresa: ${company}, Producto: ${category}`,
-    );
+    const company = business.company || "Genzai";
 
     // 2. Subir archivos a OpenAI
     let fileIds = [];
@@ -72,13 +50,12 @@ exports.setupAssistant = async (req, res) => {
     // 3. Crear Asistente
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company} (${category})`,
-      instructions: `Eres Riley, experta en ${category} para ${company}. Usa los archivos para responder.`,
-      tools: [{ type: "file_search" }, { type: "code_interpreter" }],
+      instructions: `Eres Riley, la asistente experta de ${company} en el sector de ${category}.`,
+      tools: [{ type: "file_search" }],
       model: "gpt-4o",
     });
 
-    // 4. Guardar en AIConfigs
-    // Importante: Usamos 'businessId' como Partition Key según tu imagen de AIConfigs
+    // 4. Guardar Configuración en DynamoDB
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
@@ -87,18 +64,25 @@ exports.setupAssistant = async (req, res) => {
           assistantId: assistant.id,
           businessName: company,
           ownerEmail: emailToSearch,
-          status: "active",
           updatedAt: new Date().toISOString(),
         },
       }),
     );
 
-    res.status(200).json({
-      success: true,
-      message: `¡Riley lista! Sector: ${category}`,
-    });
+    res
+      .status(200)
+      .json({ success: true, message: `Riley configurada para ${category}` });
   } catch (error) {
-    console.error("===> ERROR CRÍTICO:", error);
     res.status(500).json({ success: false, message: error.message });
   }
+};
+
+const askRiley = async (req, res) => {
+  res.status(200).json({ success: true, message: "Endpoint de chat activo" });
+};
+
+// EXPORTACIÓN UNIFICADA (Soluciona el error de Undefined)
+module.exports = {
+  setupAssistant,
+  askRiley,
 };

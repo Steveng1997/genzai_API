@@ -3,8 +3,14 @@ const router = express.Router();
 const aiController = require("../controllers/aiController");
 const multer = require("multer");
 
-// Configurar almacenamiento temporal
+// Configuración de Multer
 const upload = multer({ dest: "uploads/" });
+
+if (!aiController.setupAssistant) {
+  console.error(
+    "ERROR: aiController.setupAssistant no está definido. Revisa la exportación.",
+  );
+}
 
 router.post(
   "/setup-assistant",
