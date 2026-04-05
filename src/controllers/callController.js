@@ -1,7 +1,6 @@
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, GetCommand } = require("@aws-sdk/lib-dynamodb");
 
-// Inicialización del cliente con la región de tu captura (us-east-2)
 const client = new DynamoDBClient({
   region: process.env.AWS_REGION || "us-east-2",
 });
@@ -9,62 +8,40 @@ const ddbDocClient = DynamoDBDocumentClient.from(client);
 
 exports.makeSmartCall = async (req, res) => {
   try {
-    // Extraemos los datos enviados desde Flutter
     const { phone, businessId } = req.body;
 
-    if (!phone) {
-      return res.status(400).json({
-        success: false,
-        message: "Número de teléfono requerido",
-      });
-    }
+    if (!phone)
+      return res
+        .status(400)
+        .json({ success: false, message: "Número requerido" });
 
-    // Configuración de la consulta a DynamoDB
+    // Limpieza dinámica: dejamos solo números y añadimos 57 si falta
+    let cleanPhone = phone.toString().replace(/\D/g, "");
+    if (cleanPhone.length === 10) cleanPhone = "57" + cleanPhone;
+
     const params = {
-      // Nombre de la tabla desde tu variable de entorno en App Runner
-      TableName: process.env.DYNAMODB_TABLE_LEADS,
-      Key: {
-        // Conversión explícita a Number (Tipo N en tu tabla Clients)
-        phone: Number(phone),
-      },
+      TableName: process.env.DYNAMODB_TABLE_LEADS, // Variable de tu App Runner
+      Key: { phone: Number(cleanPhone) }, // (N) en tu DynamoDB
     };
-
-    console.log(`📡 Buscando en ${params.TableName} el teléfono: ${phone}`);
 
     const { Item } = await ddbDocClient.send(new GetCommand(params));
 
     if (!Item) {
       return res.status(404).json({
         success: false,
-        message: "El cliente no existe en la base de datos de Leads",
+        message: `El cliente ${cleanPhone} no existe en la base de datos.`,
       });
     }
 
-    // --- LÓGICA DE LLAMADA (Vapi / OpenAI / Twilio) ---
-    // Aquí usarías 'Item' que contiene toda la info del cliente (nombre, etc.)
-    console.log(
-      `✅ Cliente encontrado: ${Item.name || "Sin nombre"}. Iniciando Riley...`,
-    );
-
-    // Respuesta al frontend
+    // Lógica de éxito
     return res.status(200).json({
       success: true,
-      message: `Llamada iniciada para ${Item.name || "el cliente"}`,
-      contact: Item,
+      message: `Llamada iniciada para ${Item.fullName || "el cliente"}`,
     });
   } catch (error) {
-    console.error("❌ Error Crítico:", error);
-
-    // Manejo de error específico de AWS
-    if (error.name === "ResourceNotFoundException") {
-      return res.status(500).json({
-        error: "Configuración incorrecta: La tabla no existe en esta región.",
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      error: "Error interno del servidor al procesar la campaña",
-    });
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor" });
   }
 };
