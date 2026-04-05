@@ -7,36 +7,55 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.setupAssistant = async (req, res) => {
   try {
-    // Identificador dinámico enviado desde el Frontend
-    const userEmail = req.body.email || req.body.businessId;
+    const rawEmail = req.body.email || req.body.businessId;
 
-    if (!userEmail) {
+    if (!rawEmail) {
       return res
         .status(400)
-        .json({ success: false, message: "Email del usuario es requerido" });
+        .json({ success: false, message: "No llegó el email al servidor" });
     }
 
-    // 1. Buscar información del negocio en Payments (Dinámico)
-    const paymentsData = await dynamoDB.send(
+    const emailToSearch = rawEmail.toLowerCase().trim();
+    console.log("===> PASO 1: Iniciando búsqueda para:", emailToSearch);
+
+    // 1. Traemos TODOS los registros de Payments para buscar manualmente
+    // Esto es para depuración; si hay pocos registros, es infalible.
+    const allPayments = await dynamoDB.send(
       new ScanCommand({
         TableName: "Payments",
-        FilterExpression: "email = :e",
-        ExpressionAttributeValues: { ":e": userEmail.toLowerCase().trim() },
       }),
     );
 
-    if (!paymentsData.Items || paymentsData.Items.length === 0) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "No se encontró suscripción para este usuario",
-        });
+    console.log(
+      `===> PASO 2: Total registros en tabla Payments: ${allPayments.Items.length}`,
+    );
+
+    // Buscamos el registro que coincida con el email
+    const business = allPayments.Items.find((item) => {
+      const dbEmail = (item.email || "").toLowerCase().trim();
+      return dbEmail === emailToSearch;
+    });
+
+    if (!business) {
+      // Si no lo encuentra, imprimimos qué emails SÍ hay en la tabla para comparar
+      const existingEmails = allPayments.Items.map((i) => i.email).join(", ");
+      console.log(
+        "===> PASO 3: No se encontró el email. Emails en la tabla:",
+        existingEmails,
+      );
+
+      return res.status(404).json({
+        success: false,
+        message: `Suscripción no encontrada para ${emailToSearch}. En la tabla hay: ${existingEmails}`,
+      });
     }
 
-    const business = paymentsData.Items[0];
-    const category = business.sellingProduct; // ej: "Autos"
-    const company = business.company; // ej: "Genzai"
+    // Si llegamos aquí, lo encontramos
+    const category = business.sellingProduct || "General";
+    const company = business.company || "Negocio Genzai";
+    console.log(
+      `===> PASO 4: Match encontrado! Empresa: ${company}, Producto: ${category}`,
+    );
 
     // 2. Subir archivos a OpenAI
     let fileIds = [];
@@ -47,19 +66,19 @@ exports.setupAssistant = async (req, res) => {
         purpose: "assistants",
       });
       fileIds.push(response.id);
-      // Limpiar archivo temporal del servidor
       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
 
-    // 3. Crear Asistente con parámetros del negocio
+    // 3. Crear Asistente
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company} (${category})`,
-      instructions: `Eres Riley, la asistente experta de ${company}. Tu especialidad es el sector de ${category}. Usa los archivos cargados para responder dudas y cerrar ventas.`,
+      instructions: `Eres Riley, experta en ${category} para ${company}. Usa los archivos para responder.`,
       tools: [{ type: "file_search" }, { type: "code_interpreter" }],
       model: "gpt-4o",
     });
 
-    // 4. Guardar en AIConfigs usando el producto/categoría como llave (Partition Key)
+    // 4. Guardar en AIConfigs
+    // Importante: Usamos 'businessId' como Partition Key según tu imagen de AIConfigs
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
@@ -67,7 +86,7 @@ exports.setupAssistant = async (req, res) => {
           businessId: category,
           assistantId: assistant.id,
           businessName: company,
-          ownerEmail: userEmail.toLowerCase().trim(),
+          ownerEmail: emailToSearch,
           status: "active",
           updatedAt: new Date().toISOString(),
         },
@@ -76,12 +95,10 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Riley configurada con éxito para el nicho de ${category}`,
+      message: `¡Riley lista! Sector: ${category}`,
     });
   } catch (error) {
-    console.error("Error en setupAssistant:", error);
+    console.error("===> ERROR CRÍTICO:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-exports.askRiley = (req, res) => res.status(200).json({ success: true });
