@@ -7,10 +7,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.setupAssistant = async (req, res) => {
   try {
-    const { email } = req.body; // Recibimos el email del programador/dueño
+    const { email } = req.body;
     const files = req.files || [];
 
-    // 1. Buscamos en Payments para obtener el producto y la empresa
+    if (!email)
+      return res
+        .status(400)
+        .json({ success: false, message: "Email es requerido" });
+
+    // 1. Buscar el producto (nicho) en Payments
     const paymentsData = await dynamoDB.send(
       new ScanCommand({
         TableName: "Payments",
@@ -22,59 +27,56 @@ exports.setupAssistant = async (req, res) => {
     if (!paymentsData.Items || paymentsData.Items.length === 0) {
       return res
         .status(404)
-        .json({
-          success: false,
-          message: "No se encontró suscripción para este email",
-        });
+        .json({ success: false, message: "No se encontró suscripción" });
     }
 
-    const subscription = paymentsData.Items[0];
-    const productKey = subscription.sellingProduct; // Ejemplo: "Autos"
-    const companyName = subscription.company; // Ejemplo: "Genzai"
+    const sub = paymentsData.Items[0];
+    const productKey = sub.sellingProduct; // Ejemplo: "Autos"
+    const company = sub.company;
 
-    // Creamos un nombre descriptivo para el asistente
-    const displayName = `${companyName} - ${productKey}`;
-
-    // 2. Subir archivos a OpenAI
+    // 2. Subir archivos a OpenAI v6
     let fileIds = [];
     for (const file of files) {
-      const response = await openai.files.create({
-        file: fs.createReadStream(file.path),
+      const fileStream = fs.createReadStream(file.path);
+      const openAiFile = await openai.files.create({
+        file: fileStream,
         purpose: "assistants",
       });
-      fileIds.push(response.id);
+      fileIds.push(openAiFile.id);
+
+      // Limpiar archivo temporal
       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
 
-    // 3. Crear Asistente con contexto de NICHO
+    // 3. Crear Asistente con contexto de producto
     const assistant = await openai.beta.assistants.create({
-      name: `Riley (${displayName})`,
-      instructions: `Eres Riley, especialista de ventas en el sector de ${productKey} para la empresa ${companyName}. 
-      Tu objetivo es ser un experto en ${productKey}. Usa los archivos para conocer el inventario y precios.`,
+      name: `Riley - ${productKey}`,
+      instructions: `Eres Riley, experta en ventas de ${productKey} para la empresa ${company}. Usa los archivos adjuntos para cerrar ventas.`,
       tools: [{ type: "file_search" }, { type: "code_interpreter" }],
       model: "gpt-4o",
     });
 
-    // 4. Guardar en AIConfigs usando el PRODUCTO como ID
+    // 4. Guardar en AIConfigs usando el producto como ID
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
         Item: {
-          businessId: productKey, // AHORA ES "Autos", NO "steven_dev"
+          businessId: productKey, // Clave: Autos, Ropa, etc.
           assistantId: assistant.id,
-          businessName: displayName,
-          company: companyName,
+          businessName: company,
           category: productKey,
-          status: "active",
-          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         },
       }),
     );
 
     res
       .status(200)
-      .json({ success: true, message: `Riley entrenada para ${productKey}` });
+      .json({ success: true, message: `Riley configurada para ${productKey}` });
   } catch (error) {
+    console.error("Error Setup:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.askRiley = (req, res) => res.status(200).json({ success: true });
