@@ -9,9 +9,10 @@ const setupAssistant = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
     if (!email)
-      return res.status(400).json({ success: false, message: "Falta email" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email requerido" });
 
-    // 1. Buscar empresa en DynamoDB
     const allPayments = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_PAYMENTS }),
     );
@@ -24,7 +25,6 @@ const setupAssistant = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Suscripción no encontrada" });
 
-    // 2. Subir archivos a OpenAI
     let fileIds = [];
     if (req.files) {
       for (const file of req.files) {
@@ -37,15 +37,13 @@ const setupAssistant = async (req, res) => {
       }
     }
 
-    // 3. Crear Asistente en OpenAI
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${business.company}`,
-      instructions: `Eres Riley, asistente de ${business.company}. Usa los documentos para responder.`,
+      instructions: `Eres Riley de ${business.company}.`,
       tools: [{ type: "file_search" }],
       model: "gpt-4o",
     });
 
-    // 4. Guardar configuración vinculada al email
     await dynamoDB.send(
       new PutCommand({
         TableName: process.env.DYNAMODB_TABLE_AI,
@@ -58,12 +56,13 @@ const setupAssistant = async (req, res) => {
       }),
     );
 
-    res
-      .status(200)
-      .json({ success: true, message: "Riley entrenada con éxito" });
+    res.status(200).json({ success: true, message: "Riley lista" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-module.exports = { setupAssistant };
+// Exportación limpia
+module.exports = {
+  setupAssistant,
+};
