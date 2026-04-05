@@ -1,3 +1,6 @@
+const dynamoDB = require("../services/dynamo");
+const { PutCommand } = require("@aws-sdk/lib-dynamodb");
+
 exports.handleWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   const type = payload.type;
@@ -9,8 +12,9 @@ exports.handleWebhook = async (req, res) => {
       const callData = payload.call || {};
 
       const historyItem = {
-        id: `CALL-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // ID único garantizado
+        id: `CALL-${Date.now()}`, // Partition Key de tu tabla
         phone: callData.customer?.number || "Desconocido",
+        name: "Cliente Genzai",
         duration: `${callData.duration || 0} seg`,
         status: callData.endedReason || "completed",
         timestamp: new Date().toISOString(),
@@ -25,11 +29,15 @@ exports.handleWebhook = async (req, res) => {
         }),
       );
 
-      console.log(`✅ Guardado en historial: ${historyItem.phone}`);
+      console.log(`✅ Historial guardado con éxito para ${historyItem.phone}`);
     }
+
+    // Siempre responder 200 a Vapi
     res.status(200).json({ success: true });
   } catch (e) {
     console.error("❌ Error DynamoDB Historial:", e.message);
-    res.status(500).json({ error: e.message });
+    res
+      .status(500)
+      .json({ error: "Error al guardar historial", detail: e.message });
   }
 };
