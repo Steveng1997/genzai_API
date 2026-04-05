@@ -1,6 +1,7 @@
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
   DynamoDBDocumentClient,
+  GetCommand,
   ScanCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const axios = require("axios");
@@ -14,56 +15,76 @@ exports.makeSmartCall = async (req, res) => {
   try {
     const { businessId } = req.body;
 
-    // 1. Escaneamos la tabla de clientes desde las variables de entorno
-    const params = {
-      TableName: process.env.DYNAMODB_TABLE_LEADS,
-    };
-
-    const { Items } = await ddbDocClient.send(new ScanCommand(params));
-
-    if (!Items || Items.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No hay clientes en la tabla para iniciar la campaña.",
-      });
+    if (!businessId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "businessId es requerido" });
     }
 
-    // --- CONFIGURACIÓN DE VAPI (Extraídas de variables de entorno) ---
+    // 1. OBTENER CONFIGURACIÓN DE LA IA (Assistant ID)
+    // Buscamos en la tabla AIConfigs usando el businessId (genzai)
+    const aiConfigParams = {
+      TableName: process.env.DYNAMODB_TABLE_AI || "AIConfigs",
+      Key: { businessId: businessId },
+    };
+
+    const { Item: aiConfig } = await ddbDocClient.send(
+      new GetCommand(aiConfigParams),
+    );
+
+    if (!aiConfig || !aiConfig.assistantId) {
+      console.error(
+        `❌ No se encontró assistantId para el negocio: ${businessId}`,
+      );
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "Configuración de IA no encontrada para este negocio.",
+        });
+    }
+
+    const VAPI_ASSISTANT_ID = aiConfig.assistantId;
     const VAPI_API_KEY = process.env.VAPI_API_KEY;
-    const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID;
 
-    console.log(`🚀 Iniciando campaña masiva para ${Items.length} clientes...`);
+    // 2. OBTENER LISTA DE CLIENTES
+    const clientParams = {
+      TableName: process.env.DYNAMODB_TABLE_LEADS || "Clients",
+    };
+    const { Items: clientes } = await ddbDocClient.send(
+      new ScanCommand(clientParams),
+    );
 
-    // 2. Procesamos las llamadas usando un bucle robusto
-    // Usamos for...of para que el proceso sea ordenado y maneje bien las esperas
-    for (const cliente of Items) {
+    if (!clientes || clientes.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No hay clientes en la tabla." });
+    }
+
+    console.log(
+      `🚀 Iniciando campaña para ${businessId} usando Assistant: ${VAPI_ASSISTANT_ID}`,
+    );
+
+    // 3. DISPARAR LLAMADAS
+    for (const cliente of clientes) {
       let rawPhone = cliente.phone.toString();
-      const nombre = cliente.fullName || "Cliente";
 
+      // Formateo E.164
       let formattedPhone = rawPhone.replace(/\D/g, "");
-
-      if (formattedPhone.length === 10) {
-        formattedPhone = "57" + formattedPhone;
-      }
-
-      if (!formattedPhone.startsWith("+")) {
+      if (formattedPhone.length === 10) formattedPhone = "57" + formattedPhone;
+      if (!formattedPhone.startsWith("+"))
         formattedPhone = "+" + formattedPhone;
-      }
 
       try {
-        console.log(
-          `📡 Enviando solicitud a Vapi: ${nombre} (${formattedPhone})`,
-        );
-
-        // INTEGRACIÓN REAL CON VAPI API
         await axios.post(
           "https://api.vapi.ai/call/phone",
           {
             customer: {
               number: formattedPhone,
-              name: nombre,
+              name: cliente.fullName || "Cliente",
             },
             assistantId: VAPI_ASSISTANT_ID,
+            phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID,
           },
           {
             headers: {
@@ -72,27 +93,25 @@ exports.makeSmartCall = async (req, res) => {
             },
           },
         );
-
-        console.log(`✅ Solicitud aceptada por Vapi para: ${nombre}`);
+        console.log(
+          `✅ Llamada aceptada: ${cliente.fullName} (${formattedPhone})`,
+        );
       } catch (err) {
-        // Log detallado del error de Vapi para debugging
         console.error(
-          `❌ Falló llamada a ${formattedPhone}:`,
+          `❌ Error en Vapi para ${formattedPhone}:`,
           err.response?.data || err.message,
         );
       }
     }
 
-    // 3. Respuesta final al App
     return res.status(200).json({
       success: true,
-      message: `Proceso de campaña finalizado para ${Items.length} clientes.`,
+      message: `Campaña procesada para ${clientes.length} clientes.`,
     });
   } catch (error) {
-    console.error("❌ Error en Campaña Masiva:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error crítico al procesar la campaña masiva.",
-    });
+    console.error("❌ Error Crítico:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Error interno del servidor." });
   }
 };
