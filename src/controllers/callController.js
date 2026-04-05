@@ -1,21 +1,20 @@
 const { ScanCommand } = require("@aws-sdk/lib-dynamodb");
-const dynamoDB = require("../services/dynamo");
+const dynamoDB = require("../services/dynamo"); // Tu archivo de configuración de Dynamo
 const axios = require("axios");
 
 exports.makeSmartCall = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
-    if (!email)
-      return res
-        .status(400)
-        .json({ success: false, message: "Email es requerido" });
+    if (!email) return res.status(400).json({ message: "Email es requerido" });
 
-    // 1. Buscar el asistente en la tabla 'AIConfigs' (DYNAMODB_TABLE_AI)
+    // 1. Obtener configuración de Riley desde DynamoDB (Tabla AIConfigs)
     const configs = await dynamoDB.send(
       new ScanCommand({
         TableName: process.env.DYNAMODB_TABLE_AI,
       }),
     );
+
+    // Buscamos el asistente por el email del usuario
     const userConfig = configs.Items.find(
       (i) => (i.ownerEmail || "").toLowerCase() === email,
     );
@@ -23,13 +22,10 @@ exports.makeSmartCall = async (req, res) => {
     if (!userConfig || !userConfig.assistantId) {
       return res
         .status(404)
-        .json({
-          success: false,
-          message: "Asistente Riley no configurado en la DB",
-        });
+        .json({ message: "No se encontró configuración para Riley" });
     }
 
-    // 2. Obtener clientes de la tabla 'Clients' (DYNAMODB_TABLE_LEADS)
+    // 2. Obtener lista de clientes (Tabla Clients)
     const clientsData = await dynamoDB.send(
       new ScanCommand({
         TableName: process.env.DYNAMODB_TABLE_LEADS,
@@ -40,21 +36,15 @@ exports.makeSmartCall = async (req, res) => {
     if (clients.length === 0) {
       return res
         .status(404)
-        .json({
-          success: false,
-          message: "No hay clientes registrados para llamar",
-        });
+        .json({ message: "No hay clientes en la tabla Clients" });
     }
 
-    const results = [];
-
-    // 3. Bucle de llamadas masivas
+    // 3. Lanzar llamadas masivas
+    let callsCount = 0;
     for (const client of clients) {
       if (client.phone) {
-        // LIMPIEZA DE NÚMERO: Formato E.164 (+57...)
+        // Limpieza y formato E.164 (Ej: +573043277453)
         let cleanPhone = client.phone.toString().replace(/\D/g, "");
-
-        // Si el número tiene 10 dígitos (ej: 304...), asumimos Colombia y ponemos +57
         if (cleanPhone.length === 10) {
           cleanPhone = `+57${cleanPhone}`;
         } else if (!cleanPhone.startsWith("+")) {
@@ -62,49 +52,36 @@ exports.makeSmartCall = async (req, res) => {
         }
 
         try {
-          // LLAMADA A VAPI
-          const vapiResponse = await axios.post(
+          await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
               assistantId: userConfig.assistantId, // ID: 4c266662...
-              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // Tu ID de número
+              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // ID de tu captura
             },
             {
               headers: {
-                // IMPORTANTE: Asegúrate que esta variable en App Runner sea la Private Key (fa7a9e05...)
-                Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
+                Authorization: `Bearer ${process.env.VAPI_API_KEY}`, // La Private Key (fa7a9e05...)
                 "Content-Type": "application/json",
               },
             },
           );
-
-          results.push({
-            phone: cleanPhone,
-            status: "success",
-            id: vapiResponse.data.id,
-          });
+          callsCount++;
         } catch (err) {
           console.error(
-            `❌ Error Vapi para ${cleanPhone}:`,
+            `Error llamando a ${cleanPhone}:`,
             err.response?.data || err.message,
           );
-          results.push({
-            phone: cleanPhone,
-            status: "failed",
-            error: err.response?.data?.message || err.message,
-          });
         }
       }
     }
 
     res.status(200).json({
       success: true,
-      message: `Campaña finalizada. Intentos: ${results.length}`,
-      details: results,
+      message: `Campaña finalizada. Intentos exitosos: ${callsCount} de ${clients.length}`,
     });
   } catch (e) {
-    console.error("💥 Error Crítico:", e.message);
-    res.status(500).json({ success: false, message: e.message });
+    console.error("Error general:", e.message);
+    res.status(500).json({ message: "Error interno: " + e.message });
   }
 };
