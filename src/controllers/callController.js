@@ -10,7 +10,7 @@ exports.makeSmartCall = async (req, res) => {
     );
     const userConfig = configs.Items.find((i) => i.ownerEmail === email);
 
-    // IDS CORREGIDOS SEGÚN TUS CAPTURAS
+    // IDs EXTRAÍDOS DE TUS CAPTURAS (CORRECTOS)
     const finalAssistantId = "4c266662-68db-4046-a13f-8c021c84919c";
     const phoneId = "59d1cef7-80b8-4dfa-9a14-1394df3bc97a";
     const productToSay = userConfig?.businessName || "autos";
@@ -44,18 +44,16 @@ exports.makeSmartCall = async (req, res) => {
               },
             },
           );
+          console.log(`📞 Llamada lanzada a ${cleanPhone}`);
         } catch (err) {
           console.error(
-            `❌ Error enviando llamada a ${cleanPhone}:`,
+            `❌ Error enviando a ${cleanPhone}:`,
             err.response?.data || err.message,
           );
         }
       }
     }
-    res.status(200).json({
-      success: true,
-      message: `Campaña para ${productToSay} iniciada`,
-    });
+    res.status(200).json({ success: true, message: "Campaña iniciada" });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
