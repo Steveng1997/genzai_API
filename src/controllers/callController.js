@@ -6,7 +6,12 @@ exports.makeSmartCall = async (req, res) => {
   try {
     const { phone } = req.body;
 
-    // 1. Buscar cliente por teléfono (Partition Key: phone de tipo Número)
+    if (!phone)
+      return res
+        .status(400)
+        .json({ message: "Teléfono del cliente requerido" });
+
+    // 1. Obtener datos del cliente (Partition Key: phone como Número)
     const clientRes = await dynamoDB.send(
       new GetCommand({
         TableName: "Clients",
@@ -15,30 +20,37 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!clientRes.Item)
-      return res.status(404).json({ message: "Cliente no encontrado" });
+      return res
+        .status(404)
+        .json({ message: "Cliente no encontrado en la base de datos" });
 
     const client = clientRes.Item;
-    // Buscamos el nicho asignado al cliente en su registro
-    const category = client.sellingProduct || "Autos";
+    // El cliente debe tener asignado qué producto le interesa
+    const productCategory = client.sellingProduct;
 
-    // 2. Obtener la Riley configurada para ese nicho
+    // 2. Buscar la configuración de la IA para ese producto específico
     const aiConfig = await dynamoDB.send(
       new GetCommand({
         TableName: "AIConfigs",
-        Key: { businessId: category },
+        Key: { businessId: productCategory },
       }),
     );
 
-    if (!aiConfig.Item)
-      return res.status(404).json({ message: `No hay IA para ${category}` });
+    if (!aiConfig.Item) {
+      return res
+        .status(404)
+        .json({
+          message: `No hay una Riley configurada para el nicho: ${productCategory}`,
+        });
+    }
 
-    // 3. Lanzar llamada mediante Vapi
+    // 3. Disparar llamada con Vapi usando el AssistantId dinámico
     await axios.post(
       "https://api.vapi.ai/call/phone",
       {
         customer: {
           number: client.phone.toString(),
-          name: client.fullName,
+          name: client.fullName || "Cliente",
         },
         assistantId: aiConfig.Item.assistantId,
       },
@@ -47,10 +59,10 @@ exports.makeSmartCall = async (req, res) => {
       },
     );
 
-    res.status(200).json({ success: true, message: "Llamada enviada" });
+    res
+      .status(200)
+      .json({ success: true, message: "Campaña iniciada para este cliente" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
-
-exports.vapiWebhook = (req, res) => res.status(200).send("OK");
