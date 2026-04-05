@@ -10,32 +10,29 @@ exports.makeSmartCall = async (req, res) => {
     );
     const userConfig = configs.Items.find((i) => i.ownerEmail === email);
 
-    // IDs EXTRAÍDOS DE TUS CAPTURAS (CORRECTOS)
-    const finalAssistantId = "4c266662-68db-4046-a13f-8c021c84919c";
+    // IDs CORREGIDOS SEGÚN TUS CAPTURAS
+    const assistantId = "4c266662-68db-4046-a13f-8c021c84919c";
     const phoneId = "59d1cef7-80b8-4dfa-9a14-1394df3bc97a";
-    const productToSay = userConfig?.businessName || "autos";
+    const product = userConfig?.businessName || "autos";
 
-    const clientsData = await dynamoDB.send(
+    const leads = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_LEADS }),
     );
-    const clients = clientsData.Items || [];
+    const clients = leads.Items || [];
 
     for (const client of clients) {
       if (client.phone) {
         let cleanPhone = client.phone.toString().replace(/\D/g, "");
         if (cleanPhone.length === 10) cleanPhone = `+57${cleanPhone}`;
-        else if (!cleanPhone.startsWith("+")) cleanPhone = `+${cleanPhone}`;
 
         try {
           await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
-              assistantId: finalAssistantId,
+              assistantId: assistantId,
               phoneNumberId: phoneId,
-              assistantOverrides: {
-                variableValues: { businessName: productToSay },
-              },
+              assistantOverrides: { variableValues: { businessName: product } },
             },
             {
               headers: {
@@ -44,10 +41,9 @@ exports.makeSmartCall = async (req, res) => {
               },
             },
           );
-          console.log(`📞 Llamada lanzada a ${cleanPhone}`);
         } catch (err) {
           console.error(
-            `❌ Error enviando a ${cleanPhone}:`,
+            `❌ Error en ${cleanPhone}:`,
             err.response?.data || err.message,
           );
         }
@@ -55,6 +51,6 @@ exports.makeSmartCall = async (req, res) => {
     }
     res.status(200).json({ success: true, message: "Campaña iniciada" });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    res.status(500).json({ error: e.message });
   }
 };
