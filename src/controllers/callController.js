@@ -8,59 +8,47 @@ exports.makeSmartCall = async (req, res) => {
     if (!email)
       return res
         .status(400)
-        .json({ success: false, message: "Email es requerido" });
+        .json({ success: false, message: "Email requerido" });
 
-    // 1. Obtener configuración del asistente (Tabla AIConfigs en us-east-2)
+    // 1. Obtener configuración del asistente
     const configs = await dynamoDB.send(
-      new ScanCommand({
-        TableName: process.env.DYNAMODB_TABLE_AI,
-      }),
+      new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_AI }),
     );
-
     const userConfig = configs.Items.find(
       (i) => (i.ownerEmail || "").toLowerCase() === email,
     );
 
-    // 2. Definir Assistant ID con respaldo (Fallback) para evitar error de UUID
-    // Usamos el ID de tu captura de pantalla image_e514ea.jpg
+    // 2. Extraer el nombre del producto (auto)
+    const productToSay = userConfig?.businessName || "nuestro producto";
     const finalAssistantId =
       userConfig?.assistantId || "4c266662-68db-4046-a13f-8c02829288e9";
 
-    // 3. Obtener clientes de la base de datos (Tabla Clients)
+    // 3. Obtener clientes
     const clientsData = await dynamoDB.send(
-      new ScanCommand({
-        TableName: process.env.DYNAMODB_TABLE_LEADS,
-      }),
+      new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_LEADS }),
     );
-
     const clients = clientsData.Items || [];
-    if (clients.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "No hay clientes para llamar" });
-    }
 
     const results = [];
-
-    // 4. Bucle de llamadas
     for (const client of clients) {
       if (client.phone) {
-        // Formateo E.164 para Colombia (+57...)
         let cleanPhone = client.phone.toString().replace(/\D/g, "");
-        if (cleanPhone.length === 10) {
-          cleanPhone = `+57${cleanPhone}`;
-        } else if (!cleanPhone.startsWith("+")) {
-          cleanPhone = `+${cleanPhone}`;
-        }
+        if (cleanPhone.length === 10) cleanPhone = `+57${cleanPhone}`;
+        else if (!cleanPhone.startsWith("+")) cleanPhone = `+${cleanPhone}`;
 
         try {
-          // Petición a Vapi usando la Private Key fa7a9e05...
           await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
               assistantId: finalAssistantId,
-              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // De tu captura
+              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660",
+              // ESTO ES LO QUE HACE QUE DIGA "AUTO"
+              assistantOverrides: {
+                variableValues: {
+                  businessName: productToSay,
+                },
+              },
             },
             {
               headers: {
@@ -69,29 +57,20 @@ exports.makeSmartCall = async (req, res) => {
               },
             },
           );
-
           results.push({ phone: cleanPhone, status: "success" });
         } catch (err) {
-          console.error(
-            `❌ Error en Vapi para ${cleanPhone}:`,
-            err.response?.data || err.message,
-          );
-          results.push({
-            phone: cleanPhone,
-            status: "failed",
-            error: err.response?.data,
-          });
+          results.push({ phone: cleanPhone, status: "failed" });
         }
       }
     }
 
-    res.status(200).json({
-      success: true,
-      message: `Campaña procesada. Intentos: ${results.length}`,
-      details: results,
-    });
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: `Llamando para vender: ${productToSay}`,
+      });
   } catch (e) {
-    console.error("💥 Error Crítico:", e.message);
     res.status(500).json({ success: false, message: e.message });
   }
 };
