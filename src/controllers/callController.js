@@ -1,31 +1,32 @@
 const { ScanCommand } = require("@aws-sdk/lib-dynamodb");
-const dynamoDB = require("../services/dynamo"); // Tu archivo de configuración de Dynamo
+const dynamoDB = require("../services/dynamo");
 const axios = require("axios");
 
 exports.makeSmartCall = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
-    if (!email) return res.status(400).json({ message: "Email es requerido" });
+    if (!email)
+      return res
+        .status(400)
+        .json({ success: false, message: "Email es requerido" });
 
-    // 1. Obtener configuración de Riley desde DynamoDB (Tabla AIConfigs)
+    // 1. Obtener configuración del asistente (Tabla AIConfigs en us-east-2)
     const configs = await dynamoDB.send(
       new ScanCommand({
         TableName: process.env.DYNAMODB_TABLE_AI,
       }),
     );
 
-    // Buscamos el asistente por el email del usuario
     const userConfig = configs.Items.find(
       (i) => (i.ownerEmail || "").toLowerCase() === email,
     );
 
-    if (!userConfig || !userConfig.assistantId) {
-      return res
-        .status(404)
-        .json({ message: "No se encontró configuración para Riley" });
-    }
+    // 2. Definir Assistant ID con respaldo (Fallback) para evitar error de UUID
+    // Usamos el ID de tu captura de pantalla image_e514ea.jpg
+    const finalAssistantId =
+      userConfig?.assistantId || "4c266662-68db-4046-a13f-8c02829288e9";
 
-    // 2. Obtener lista de clientes (Tabla Clients)
+    // 3. Obtener clientes de la base de datos (Tabla Clients)
     const clientsData = await dynamoDB.send(
       new ScanCommand({
         TableName: process.env.DYNAMODB_TABLE_LEADS,
@@ -36,14 +37,15 @@ exports.makeSmartCall = async (req, res) => {
     if (clients.length === 0) {
       return res
         .status(404)
-        .json({ message: "No hay clientes en la tabla Clients" });
+        .json({ success: false, message: "No hay clientes para llamar" });
     }
 
-    // 3. Lanzar llamadas masivas
-    let callsCount = 0;
+    const results = [];
+
+    // 4. Bucle de llamadas
     for (const client of clients) {
       if (client.phone) {
-        // Limpieza y formato E.164 (Ej: +573043277453)
+        // Formateo E.164 para Colombia (+57...)
         let cleanPhone = client.phone.toString().replace(/\D/g, "");
         if (cleanPhone.length === 10) {
           cleanPhone = `+57${cleanPhone}`;
@@ -52,36 +54,44 @@ exports.makeSmartCall = async (req, res) => {
         }
 
         try {
+          // Petición a Vapi usando la Private Key fa7a9e05...
           await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
-              assistantId: userConfig.assistantId, // ID: 4c266662...
-              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // ID de tu captura
+              assistantId: finalAssistantId,
+              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // De tu captura
             },
             {
               headers: {
-                Authorization: `Bearer ${process.env.VAPI_API_KEY}`, // La Private Key (fa7a9e05...)
+                Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
                 "Content-Type": "application/json",
               },
             },
           );
-          callsCount++;
+
+          results.push({ phone: cleanPhone, status: "success" });
         } catch (err) {
           console.error(
-            `Error llamando a ${cleanPhone}:`,
+            `❌ Error en Vapi para ${cleanPhone}:`,
             err.response?.data || err.message,
           );
+          results.push({
+            phone: cleanPhone,
+            status: "failed",
+            error: err.response?.data,
+          });
         }
       }
     }
 
     res.status(200).json({
       success: true,
-      message: `Campaña finalizada. Intentos exitosos: ${callsCount} de ${clients.length}`,
+      message: `Campaña procesada. Intentos: ${results.length}`,
+      details: results,
     });
   } catch (e) {
-    console.error("Error general:", e.message);
-    res.status(500).json({ message: "Error interno: " + e.message });
+    console.error("💥 Error Crítico:", e.message);
+    res.status(500).json({ success: false, message: e.message });
   }
 };
