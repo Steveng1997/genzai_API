@@ -1,7 +1,6 @@
-const express = require("express");
-const router = express.Router();
-const callController = require("../controllers/callController");
+const router = require("express").Router();
+const call = require("../controllers/callController");
 
-router.post("/make-smart-call", callController.makeSmartCall);
+router.post("/make-smart-call", call.makeSmartCall);
 
 module.exports = router;
