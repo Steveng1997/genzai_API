@@ -5,12 +5,8 @@ const axios = require("axios");
 exports.makeSmartCall = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
-    if (!email)
-      return res
-        .status(400)
-        .json({ success: false, message: "Email requerido" });
 
-    // 1. Obtener configuración del asistente
+    // 1. Cargar configuración de Riley desde DynamoDB
     const configs = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_AI }),
     );
@@ -18,18 +14,23 @@ exports.makeSmartCall = async (req, res) => {
       (i) => (i.ownerEmail || "").toLowerCase() === email,
     );
 
-    // 2. Extraer el nombre del producto (auto)
-    const productToSay = userConfig?.businessName || "nuestro producto";
+    const productToSay = userConfig?.businessName || "autos";
     const finalAssistantId =
       userConfig?.assistantId || "4c266662-68db-4046-a13f-8c02829288e9";
 
-    // 3. Obtener clientes
+    // USAMOS LA NUEVA VARIABLE DE ENTORNO
+    const phoneId =
+      process.env.VAPI_PHONE_NUMBER_ID ||
+      "59d1cef7-80b8-4dfa-9a14-13943f114660";
+
+    // 2. Obtener lista de clientes
     const clientsData = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_LEADS }),
     );
     const clients = clientsData.Items || [];
 
-    const results = [];
+    console.log(`🚀 Iniciando campaña con PhoneID: ${phoneId}`);
+
     for (const client of clients) {
       if (client.phone) {
         let cleanPhone = client.phone.toString().replace(/\D/g, "");
@@ -37,13 +38,12 @@ exports.makeSmartCall = async (req, res) => {
         else if (!cleanPhone.startsWith("+")) cleanPhone = `+${cleanPhone}`;
 
         try {
-          await axios.post(
+          const response = await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
               assistantId: finalAssistantId,
-              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660",
-              // ESTO ES LO QUE HACE QUE DIGA "AUTO"
+              phoneNumberId: phoneId, // <--- ID DINÁMICO CORREGIDO
               assistantOverrides: {
                 variableValues: {
                   businessName: productToSay,
@@ -57,20 +57,23 @@ exports.makeSmartCall = async (req, res) => {
               },
             },
           );
-          results.push({ phone: cleanPhone, status: "success" });
+          console.log(
+            `📞 Llamada aceptada para ${cleanPhone}. ID: ${response.data.id}`,
+          );
         } catch (err) {
-          results.push({ phone: cleanPhone, status: "failed" });
+          console.error(
+            `❌ Error en Vapi para ${cleanPhone}:`,
+            err.response?.data || err.message,
+          );
         }
       }
     }
 
     res
       .status(200)
-      .json({
-        success: true,
-        message: `Llamando para vender: ${productToSay}`,
-      });
+      .json({ success: true, message: `Venta de ${productToSay} en marcha.` });
   } catch (e) {
+    console.error("💥 Error en el proceso:", e.message);
     res.status(500).json({ success: false, message: e.message });
   }
 };
