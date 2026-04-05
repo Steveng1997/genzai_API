@@ -8,49 +8,50 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 exports.setupAssistant = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
+    const { businessId } = req.body;
     const files = req.files;
 
-    if (!email) return res.status(400).json({ message: "Email requerido" });
+    if (!email || !businessId)
+      return res.status(400).json({ message: "Email y BusinessId requeridos" });
 
-    // 1. Buscar suscripción del usuario en la tabla de Pagos
+    // 1. Buscar suscripción
     const allPayments = await dynamoDB.send(
-      new ScanCommand({
-        TableName: process.env.DYNAMODB_TABLE_PAYMENTS || "Payments",
-      }),
+      new ScanCommand({ TableName: "Payments" }),
     );
-    const business = allPayments.Items.find((i) => i.email === email);
+    const business = allPayments.Items.find(
+      (i) => i.email.toLowerCase() === email,
+    );
 
     if (!business)
       return res.status(404).json({ message: "Suscripción no encontrada" });
 
-    // 2. Procesar archivos recibidos
+    // 2. Simulación de procesamiento de archivos (Punto 1)
     if (files && files.length > 0) {
       files.forEach((file) => {
-        console.log(`📄 Archivo procesado: ${file.originalname}`);
-        // Aquí podrías implementar la subida a OpenAI Vector Store
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
       });
     }
 
-    const product = business.sellingProduct || "autos";
+    const product = business.sellingProduct || "General";
 
-    // 3. Crear Asistente en OpenAI
+    // 3. Crear Asistente dinámico (Punto 3)
     const assistant = await openai.beta.assistants.create({
-      name: `Riley - ${product}`,
-      instructions: `Eres la asistente experta en ventas de ${product}.`,
+      name: `Riley - ${business.company}`,
+      instructions: `Eres Riley, la asistente experta de ${business.company}, especialistas en ${product}.`,
       model: "gpt-4o",
     });
 
-    // 4. Guardar configuración en la tabla de AI
+    // 4. Guardar Configuración (Punto 2, 3 y 5)
     await dynamoDB.send(
       new PutCommand({
-        TableName: process.env.DYNAMODB_TABLE_AI || "AIConfigs",
+        TableName: "AIConfigs",
         Item: {
-          businessId: business.company.toLowerCase().replace(/ /g, "_"),
+          businessId: businessId,
           ownerEmail: email,
           assistantId: "4c266662-68db-4046-a13f-8c021c84919c", // ID de Vapi
           openaiAssistantId: assistant.id,
           businessName: product,
+          paymentId: business.paymentId || "N/A",
           updatedAt: new Date().toISOString(),
         },
       }),
@@ -58,11 +59,8 @@ exports.setupAssistant = async (req, res) => {
 
     res
       .status(200)
-      .json({ success: true, message: "Riley entrenada con éxito" });
+      .json({ success: true, message: "Riley configurada correctamente" });
   } catch (e) {
-    console.error("❌ Error en AI Setup:", e.message);
-    res
-      .status(500)
-      .json({ message: "Error al procesar archivos", error: e.message });
+    res.status(500).json({ message: "Error en setup", error: e.message });
   }
 };

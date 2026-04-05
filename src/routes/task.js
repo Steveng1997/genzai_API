@@ -3,7 +3,7 @@ const router = express.Router();
 const taskController = require("../controllers/taskController");
 
 router.get("/", taskController.getTasks);
-router.post("/add", taskController.createTask);
-router.patch("/complete/:taskId", taskController.completeTask);
+router.patch("/update-status", taskController.completeTask);
+router.post("/webhook-vapi", taskController.handleVapiWebhook);
 
 module.exports = router;

@@ -2,96 +2,70 @@ const {
   PutCommand,
   ScanCommand,
   UpdateCommand,
-  DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
-const { docClient } = require("../config/aws");
+const dynamoDB = require("../services/dynamo");
 
-// Nombre de la tabla según tu nueva estructura en AWS
-const TABLE_NAME = "Tasks";
-
-// 1. Obtener todas las tareas (Esta es la que faltaba y causaba el error)
+// Listar tareas para Flutter
 exports.getTasks = async (req, res) => {
-  const command = new ScanCommand({
-    TableName: TABLE_NAME,
-  });
-
   try {
-    const response = await docClient.send(command);
-    // Retornamos los items o un array vacío si no hay nada
-    res.status(200).json(response.Items || []);
-  } catch (error) {
-    console.error("Error fetching tasks:", error);
-    res.status(500).json({ error: error.message });
+    const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
+    res.status(200).json(data.Items);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };
 
-// 2. Crear Tarea
-exports.createTask = async (req, res) => {
-  const { subject, Name, description, dueDate } = req.body;
-
-  const command = new PutCommand({
-    TableName: TABLE_NAME,
-    Item: {
-      // taskId es numérico (N) en tu tabla
-      taskId: Date.now(),
-      subject: subject,
-      Name: Name,
-      description: description,
-      dueDate: dueDate,
-      status: "PENDING",
-      createdAt: new Date().toISOString(),
-    },
-  });
-
-  try {
-    await docClient.send(command);
-    res.status(201).json({ message: "Task created successfully" });
-  } catch (error) {
-    console.error("Error creating task:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// 3. Completar Tarea
+// Actualizar estado desde Flutter
 exports.completeTask = async (req, res) => {
-  const { taskId } = req.params;
-
-  const command = new UpdateCommand({
-    TableName: TABLE_NAME,
-    Key: {
-      // Conversión obligatoria a Number para el tipo (N) de la Partition Key
-      taskId: Number(taskId),
-    },
-    UpdateExpression: "set #s = :status",
-    ExpressionAttributeNames: { "#s": "status" },
-    ExpressionAttributeValues: { ":status": "COMPLETED" },
-  });
-
+  const { taskId, isCompleted } = req.body;
   try {
-    await docClient.send(command);
-    res.status(200).json({ message: "Task completed" });
-  } catch (error) {
-    console.error("Error completing task:", error);
-    res.status(500).json({ error: error.message });
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: "Tasks",
+        Key: { taskId: taskId },
+        UpdateExpression: "set isCompleted = :val",
+        ExpressionAttributeValues: { ":val": isCompleted },
+      }),
+    );
+    res.status(200).json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };
 
-// 4. Eliminar Tarea
-exports.deleteTask = async (req, res) => {
-  const { taskId } = req.params;
-
-  const command = new DeleteCommand({
-    TableName: TABLE_NAME,
-    Key: {
-      taskId: Number(taskId),
-    },
-  });
+// Webhook unificado (Punto 6 y 7)
+exports.handleVapiWebhook = async (req, res) => {
+  const payload = req.body.message || req.body;
+  const type = payload.type;
 
   try {
-    await docClient.send(command);
-    res.status(200).json({ message: "Task deleted" });
-  } catch (error) {
-    console.error("Error deleting task:", error);
-    res.status(500).json({ error: error.message });
+    if (type === "end-of-call-report") {
+      const callData = payload.call || {};
+      const meta = callData.metadata || {};
+
+      // Punto 6: Consumo (ID como Número)
+      await dynamoDB.send(
+        new PutCommand({
+          TableName: "ConsumptionHistory",
+          Item: {
+            id: Date.now(),
+            businessId: meta.businessId || "default",
+            phone: callData.customer?.number || "Desconocido",
+            duration: `${Math.round(callData.duration || 0)} seg`,
+            timestamp: new Date().toISOString(),
+            businessName: meta.businessName || "General",
+          },
+        }),
+      );
+    }
+
+    // Punto 7: Tarea detectada por IA (Ejemplo de evento Tool)
+    if (type === "tool-calls") {
+      // Aquí procesarías la extracción de datos de la IA para crear la tarea
+    }
+
+    res.status(200).json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };
