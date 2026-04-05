@@ -7,33 +7,22 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const setupAssistant = async (req, res) => {
   try {
-    const email = (req.body.email || req.body.userEmail || "")
-      .toLowerCase()
-      .trim();
+    const email = (req.body.email || "").toLowerCase().trim();
     if (!email)
-      return res
-        .status(400)
-        .json({ success: false, message: "Email requerido" });
+      return res.status(400).json({ success: false, message: "Falta email" });
 
-    // 1. Buscar suscripción en Payments
+    // 1. Buscar empresa en DynamoDB
     const allPayments = await dynamoDB.send(
-      new ScanCommand({ TableName: "Payments" }),
+      new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_PAYMENTS }),
     );
     const business = allPayments.Items.find(
       (item) => (item.email || "").toLowerCase().trim() === email,
     );
 
-    if (!business) {
+    if (!business)
       return res
         .status(404)
-        .json({
-          success: false,
-          message: "No se encontró suscripción para este email",
-        });
-    }
-
-    const category = business.sellingProduct || "General";
-    const company = business.company || "Genzai Partner";
+        .json({ success: false, message: "Suscripción no encontrada" });
 
     // 2. Subir archivos a OpenAI
     let fileIds = [];
@@ -48,23 +37,22 @@ const setupAssistant = async (req, res) => {
       }
     }
 
-    // 3. Crear Asistente Riley
+    // 3. Crear Asistente en OpenAI
     const assistant = await openai.beta.assistants.create({
-      name: `Riley - ${company}`,
-      instructions: `Eres Riley, asistente de ${company} en el sector ${category}. Usa tus archivos para responder.`,
+      name: `Riley - ${business.company}`,
+      instructions: `Eres Riley, asistente de ${business.company}. Usa los documentos para responder.`,
       tools: [{ type: "file_search" }],
       model: "gpt-4o",
     });
 
-    // 4. Guardar en AIConfigs
+    // 4. Guardar configuración vinculada al email
     await dynamoDB.send(
       new PutCommand({
-        TableName: "AIConfigs",
+        TableName: process.env.DYNAMODB_TABLE_AI,
         Item: {
-          businessId: category, // Usado para identificar el contexto en la llamada
-          assistantId: assistant.id,
-          businessName: company,
           ownerEmail: email,
+          assistantId: assistant.id,
+          businessName: business.company,
           updatedAt: new Date().toISOString(),
         },
       }),
@@ -72,13 +60,10 @@ const setupAssistant = async (req, res) => {
 
     res
       .status(200)
-      .json({ success: true, message: `Riley configurada para ${category}` });
+      .json({ success: true, message: "Riley entrenada con éxito" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-module.exports = {
-  setupAssistant,
-  askRiley: async (req, res) => res.json({ ok: true }),
-};
+module.exports = { setupAssistant };
