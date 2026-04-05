@@ -10,9 +10,10 @@ const makeSmartCall = async (req, res) => {
     if (!email || !customerPhone) {
       return res
         .status(400)
-        .json({ success: false, message: "Email y teléfono requeridos" });
+        .json({ success: false, message: "Faltan datos: email o phone" });
     }
 
+    // 1. Buscar configuración
     const allConfigs = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_AI }),
     );
@@ -23,9 +24,13 @@ const makeSmartCall = async (req, res) => {
     if (!config || !config.assistantId) {
       return res
         .status(404)
-        .json({ success: false, message: "IA no configurada" });
+        .json({
+          success: false,
+          message: "IA no encontrada para este usuario",
+        });
     }
 
+    // 2. Llamar a VAPI
     const vapiResponse = await axios.post(
       "https://api.vapi.ai/call/phone",
       {
@@ -41,13 +46,18 @@ const makeSmartCall = async (req, res) => {
       },
     );
 
-    res.status(200).json({ success: true, callId: vapiResponse.data.id });
+    res.status(200).json({
+      success: true,
+      message: "Llamada enviada a VAPI",
+      callId: vapiResponse.data.id,
+    });
   } catch (error) {
+    console.error(
+      "Error en makeSmartCall:",
+      error.response?.data || error.message,
+    );
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-// CRÍTICO: Asegúrate de exportar la función así
-module.exports = {
-  makeSmartCall,
-};
+module.exports = { makeSmartCall };

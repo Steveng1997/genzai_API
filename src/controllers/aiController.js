@@ -13,6 +13,7 @@ const setupAssistant = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Email requerido" });
 
+    // 1. Buscar en Payments
     const allPayments = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_PAYMENTS }),
     );
@@ -25,6 +26,7 @@ const setupAssistant = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Suscripción no encontrada" });
 
+    // 2. Subir archivos
     let fileIds = [];
     if (req.files) {
       for (const file of req.files) {
@@ -37,6 +39,7 @@ const setupAssistant = async (req, res) => {
       }
     }
 
+    // 3. Crear Asistente
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${business.company}`,
       instructions: `Eres Riley de ${business.company}.`,
@@ -44,25 +47,30 @@ const setupAssistant = async (req, res) => {
       model: "gpt-4o",
     });
 
+    // 4. GUARDAR EN DYNAMO (Incluyendo la clave businessId)
+    const itemToSave = {
+      businessId: business.company.replace(/\s+/g, "_"), // REQUERIDO: Clave de partición
+      ownerEmail: email,
+      assistantId: assistant.id,
+      businessName: business.company,
+      category: business.sellingProduct || "General",
+      updatedAt: new Date().toISOString(),
+    };
+
     await dynamoDB.send(
       new PutCommand({
         TableName: process.env.DYNAMODB_TABLE_AI,
-        Item: {
-          ownerEmail: email,
-          assistantId: assistant.id,
-          businessName: business.company,
-          updatedAt: new Date().toISOString(),
-        },
+        Item: itemToSave,
       }),
     );
 
-    res.status(200).json({ success: true, message: "Riley lista" });
+    res
+      .status(200)
+      .json({ success: true, message: "Riley configurada con businessId" });
   } catch (error) {
+    console.error("Error en setupAssistant:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Exportación limpia
-module.exports = {
-  setupAssistant,
-};
+module.exports = { setupAssistant };
