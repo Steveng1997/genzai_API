@@ -1,6 +1,3 @@
-const { PutCommand } = require("@aws-sdk/lib-dynamodb");
-const dynamoDB = require("../services/dynamo");
-
 exports.handleWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   const type = payload.type;
@@ -12,9 +9,8 @@ exports.handleWebhook = async (req, res) => {
       const callData = payload.call || {};
 
       const historyItem = {
-        id: `CALL-${Date.now()}`, // <--- CAMBIADO A "id" PARA DYNAMODB
+        id: `CALL-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // ID único garantizado
         phone: callData.customer?.number || "Desconocido",
-        name: "Cliente Genzai",
         duration: `${callData.duration || 0} seg`,
         status: callData.endedReason || "completed",
         timestamp: new Date().toISOString(),
@@ -29,15 +25,11 @@ exports.handleWebhook = async (req, res) => {
         }),
       );
 
-      console.log(
-        `✅ Registro guardado exitosamente para ${historyItem.phone}`,
-      );
+      console.log(`✅ Guardado en historial: ${historyItem.phone}`);
     }
     res.status(200).json({ success: true });
   } catch (e) {
-    console.error("❌ Error Webhook:", e.message);
-    res
-      .status(500)
-      .json({ error: "Error al procesar el archivo", detail: e.message });
+    console.error("❌ Error DynamoDB Historial:", e.message);
+    res.status(500).json({ error: e.message });
   }
 };
