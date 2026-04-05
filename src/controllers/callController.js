@@ -5,31 +5,20 @@ const axios = require("axios");
 exports.makeSmartCall = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
-
-    // 1. Cargar configuración de Riley desde DynamoDB
     const configs = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_AI }),
     );
-    const userConfig = configs.Items.find(
-      (i) => (i.ownerEmail || "").toLowerCase() === email,
-    );
+    const userConfig = configs.Items.find((i) => i.ownerEmail === email);
 
+    // IDS CORREGIDOS SEGÚN TUS CAPTURAS
+    const finalAssistantId = "4c266662-68db-4046-a13f-8c021c84919c";
+    const phoneId = "59d1cef7-80b8-4dfa-9a14-1394df3bc97a";
     const productToSay = userConfig?.businessName || "autos";
-    const finalAssistantId =
-      userConfig?.assistantId || "4c266662-68db-4046-a13f-8c02829288e9";
 
-    // USAMOS LA NUEVA VARIABLE DE ENTORNO
-    const phoneId =
-      process.env.VAPI_PHONE_NUMBER_ID ||
-      "59d1cef7-80b8-4dfa-9a14-13943f114660";
-
-    // 2. Obtener lista de clientes
     const clientsData = await dynamoDB.send(
       new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_LEADS }),
     );
     const clients = clientsData.Items || [];
-
-    console.log(`🚀 Iniciando campaña con PhoneID: ${phoneId}`);
 
     for (const client of clients) {
       if (client.phone) {
@@ -38,16 +27,14 @@ exports.makeSmartCall = async (req, res) => {
         else if (!cleanPhone.startsWith("+")) cleanPhone = `+${cleanPhone}`;
 
         try {
-          const response = await axios.post(
+          await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
               assistantId: finalAssistantId,
-              phoneNumberId: phoneId, // <--- ID DINÁMICO CORREGIDO
+              phoneNumberId: phoneId,
               assistantOverrides: {
-                variableValues: {
-                  businessName: productToSay,
-                },
+                variableValues: { businessName: productToSay },
               },
             },
             {
@@ -57,23 +44,19 @@ exports.makeSmartCall = async (req, res) => {
               },
             },
           );
-          console.log(
-            `📞 Llamada aceptada para ${cleanPhone}. ID: ${response.data.id}`,
-          );
         } catch (err) {
           console.error(
-            `❌ Error en Vapi para ${cleanPhone}:`,
+            `❌ Error enviando llamada a ${cleanPhone}:`,
             err.response?.data || err.message,
           );
         }
       }
     }
-
-    res
-      .status(200)
-      .json({ success: true, message: `Venta de ${productToSay} en marcha.` });
+    res.status(200).json({
+      success: true,
+      message: `Campaña para ${productToSay} iniciada`,
+    });
   } catch (e) {
-    console.error("💥 Error en el proceso:", e.message);
-    res.status(500).json({ success: false, message: e.message });
+    res.status(500).json({ success: false, error: e.message });
   }
 };

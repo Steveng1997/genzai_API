@@ -1,6 +1,7 @@
-const router = require("express").Router();
-const vapi = require("../controllers/vapiController");
+const express = require("express");
+const router = express.Router();
+const vapiController = require("../controllers/vapiController");
 
-router.post("/webhook", vapi.handleWebhook);
+router.post("/webhook", vapiController.handleWebhook);
 
 module.exports = router;
