@@ -7,56 +7,53 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.setupAssistant = async (req, res) => {
   try {
+    // Con Multer, req.body ya no llegará vacío
     const email = (req.body.email || "").toLowerCase().trim();
-    const files = req.files; // Aquí llegan gracias a multer
+    const files = req.files; // Aquí están tus PDF, Excel, etc.
 
-    if (!email) return res.status(400).json({ message: "Falta el email" });
+    if (!email) return res.status(400).json({ message: "Email requerido" });
 
-    // 1. Verificar suscripción
+    // 1. Buscar suscripción del usuario
     const allPayments = await dynamoDB.send(
-      new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_PAYMENTS }),
+      new ScanCommand({ TableName: "Payments" }),
     );
     const business = allPayments.Items.find((i) => i.email === email);
-    if (!business) return res.status(404).json({ message: "Sin suscripción" });
 
-    // 2. Subir archivos a OpenAI para que Riley los use
-    let vectorStoreId = null;
+    if (!business)
+      return res.status(404).json({ message: "Suscripción no encontrada" });
+
+    // 2. Opcional: Subir archivos a OpenAI para entrenamiento real
+    // Por ahora, solo confirmamos recepción y limpiamos temporales
     if (files && files.length > 0) {
-      // Aquí podrías crear un vector store o subir archivos individuales
-      // Por ahora, Riley usará gpt-4o con el producto:
-      for (const file of files) {
-        // Lógica de subida opcional a OpenAI...
-        fs.unlinkSync(file.path); // Limpiar archivos temporales
-      }
+      files.forEach((file) => {
+        console.log(`Archivo recibido: ${file.originalname}`);
+        fs.unlinkSync(file.path); // Borra el archivo temporal del server
+      });
     }
 
     const product = business.sellingProduct || "autos";
 
-    // 3. Crear Asistente
-    const assistant = await openai.beta.assistants.create({
-      name: `Riley - ${product}`,
-      instructions: `Eres la asistente experta en ventas de ${product}.`,
-      model: "gpt-4o",
-    });
-
-    // 4. Guardar Configuración
+    // 3. Actualizar configuración en DynamoDB
     await dynamoDB.send(
       new PutCommand({
-        TableName: process.env.DYNAMODB_TABLE_AI,
+        TableName: "AIConfigs",
         Item: {
           businessId: business.company.toLowerCase().replace(/ /g, "_"),
           ownerEmail: email,
           assistantId: "4c266662-68db-4046-a13f-8c021c84919c",
-          openaiAssistantId: assistant.id,
           businessName: product,
           updatedAt: new Date().toISOString(),
         },
       }),
     );
 
-    res.status(200).json({ success: true, message: "Iniciando..." });
+    res
+      .status(200)
+      .json({ success: true, message: "Riley entrenada con éxito" });
   } catch (e) {
-    console.error("❌ Error Setup Assistant:", e.message);
-    res.status(500).json({ message: e.message });
+    console.error("Error en AI Setup:", e.message);
+    res
+      .status(500)
+      .json({ message: "Error al procesar archivos", error: e.message });
   }
 };

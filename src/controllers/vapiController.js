@@ -5,14 +5,15 @@ exports.handleWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   const type = payload.type;
 
-  console.log(`📩 Webhook Vapi: ${type}`);
+  console.log(`📩 Webhook Vapi recibido: ${type}`);
 
   try {
     if (type === "end-of-call-report") {
       const callData = payload.call || {};
 
       const historyItem = {
-        id: `CALL-${Date.now()}`, // Partition Key de tu tabla
+        // CORRECCIÓN CRÍTICA: Convertimos el ID a Número (N) para que coincida con tu tabla
+        id: Date.now(),
         phone: callData.customer?.number || "Desconocido",
         name: "Cliente Genzai",
         duration: `${callData.duration || 0} seg`,
@@ -29,15 +30,15 @@ exports.handleWebhook = async (req, res) => {
         }),
       );
 
-      console.log(`✅ Historial guardado con éxito para ${historyItem.phone}`);
+      console.log(
+        `✅ Registro guardado exitosamente con ID numérico: ${historyItem.id}`,
+      );
     }
 
-    // Siempre responder 200 a Vapi
     res.status(200).json({ success: true });
   } catch (e) {
     console.error("❌ Error DynamoDB Historial:", e.message);
-    res
-      .status(500)
-      .json({ error: "Error al guardar historial", detail: e.message });
+    // Si sigue fallando, este log nos dirá si es por otra columna
+    res.status(500).json({ error: "Error de tipo de dato", detail: e.message });
   }
 };
