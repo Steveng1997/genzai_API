@@ -5,6 +5,7 @@ const fs = require("fs");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Función para configurar al asistente
 const setupAssistant = async (req, res) => {
   try {
     const rawEmail = req.body.email || req.body.businessId;
@@ -39,23 +40,25 @@ const setupAssistant = async (req, res) => {
     let fileIds = [];
     const files = req.files || [];
     for (const file of files) {
-      const response = await openai.files.create({
-        file: fs.createReadStream(file.path),
-        purpose: "assistants",
-      });
-      fileIds.push(response.id);
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      if (fs.existsSync(file.path)) {
+        const response = await openai.files.create({
+          file: fs.createReadStream(file.path),
+          purpose: "assistants",
+        });
+        fileIds.push(response.id);
+        fs.unlinkSync(file.path); // Limpiar archivo temporal
+      }
     }
 
     // 3. Crear Asistente
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company} (${category})`,
-      instructions: `Eres Riley, la asistente experta de ${company} en el sector de ${category}.`,
+      instructions: `Eres Riley, la asistente de ${company}. Tu sector es ${category}.`,
       tools: [{ type: "file_search" }],
       model: "gpt-4o",
     });
 
-    // 4. Guardar Configuración en DynamoDB
+    // 4. Guardar Configuración
     await dynamoDB.send(
       new PutCommand({
         TableName: "AIConfigs",
@@ -73,15 +76,17 @@ const setupAssistant = async (req, res) => {
       .status(200)
       .json({ success: true, message: `Riley configurada para ${category}` });
   } catch (error) {
+    console.error("Error en setupAssistant:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
+// Función para el chat (asegúrate de que esta función exista si la llamas en el router)
 const askRiley = async (req, res) => {
-  res.status(200).json({ success: true, message: "Endpoint de chat activo" });
+  res.status(200).json({ success: true, message: "Chat activo" });
 };
 
-// EXPORTACIÓN UNIFICADA (Soluciona el error de Undefined)
+// EXPORTACIÓN ÚNICA Y CLARA
 module.exports = {
   setupAssistant,
   askRiley,
