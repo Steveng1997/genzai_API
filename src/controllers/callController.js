@@ -5,14 +5,12 @@ const axios = require("axios");
 exports.makeSmartCall = async (req, res) => {
   try {
     const email = (req.body.email || "").toLowerCase().trim();
-    if (!email)
-      return res
-        .status(400)
-        .json({ success: false, message: "Email requerido" });
 
-    // 1. Obtener configuración del asistente
+    // 1. Obtener asistente de la tabla 'AIConfigs'
     const configs = await dynamoDB.send(
-      new ScanCommand({ TableName: process.env.DYNAMODB_TABLE_AI }),
+      new ScanCommand({
+        TableName: process.env.DYNAMODB_TABLE_AI,
+      }),
     );
     const userConfig = configs.Items.find(
       (i) => (i.ownerEmail || "").toLowerCase() === email,
@@ -21,7 +19,7 @@ exports.makeSmartCall = async (req, res) => {
     if (!userConfig || !userConfig.assistantId) {
       return res
         .status(404)
-        .json({ success: false, message: "Riley no está configurada aún" });
+        .json({ message: "Asistente Riley no configurado" });
     }
 
     // 2. Obtener clientes de la tabla 'Clients'
@@ -32,58 +30,42 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     const clients = clientsData.Items || [];
-    if (clients.length === 0) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "No hay clientes en la base de datos",
-        });
-    }
-
-    const results = [];
 
     // 3. Lanzar llamadas masivas
     for (const client of clients) {
       if (client.phone) {
-        // IMPORTANTE: Vapi requiere formato internacional (+57...)
-        // Limpiamos el número de espacios o caracteres extra
-        let cleanPhone = client.phone.toString().replace(/\D/g, "");
-        if (!cleanPhone.startsWith("+")) cleanPhone = `+${cleanPhone}`;
+        // Limpiamos el número de espacios para Vapi
+        const cleanPhone = client.phone.toString().replace(/\s+/g, "");
 
         try {
           await axios.post(
             "https://api.vapi.ai/call/phone",
             {
               customer: { number: cleanPhone },
-              assistantId: userConfig.assistantId,
-              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // Asegúrate que este ID sea el correcto
+              assistantId: userConfig.assistantId, // Tu ID: 4c266662...
+              phoneNumberId: "59d1cef7-80b8-4dfa-9a14-13943f114660", // ID de tu número Vapi
             },
             {
               headers: {
-                Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
+                Authorization: `Bearer ${process.env.VAPI_API_KEY}`, // Usa la Private Key corregida
                 "Content-Type": "application/json",
               },
             },
           );
-          results.push({ phone: cleanPhone, status: "success" });
         } catch (err) {
           console.error(
-            `Error llamando a ${cleanPhone}:`,
+            `Fallo al llamar a ${cleanPhone}:`,
             err.response?.data || err.message,
           );
-          results.push({ phone: cleanPhone, status: "failed" });
         }
       }
     }
 
     res.status(200).json({
       success: true,
-      message: `Campaña procesada para ${results.length} números encontrados.`,
+      message: `Campaña procesada para ${clients.length} números encontrados.`,
     });
   } catch (e) {
-    res
-      .status(500)
-      .json({ success: false, message: "Error interno del servidor" });
+    res.status(500).json({ error: e.message });
   }
 };
