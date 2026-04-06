@@ -37,45 +37,71 @@ exports.completeTask = async (req, res) => {
   }
 };
 
+// --- WEBHOOK VAPI (CORREGIDO) ---
+
 exports.handleVapiWebhook = async (req, res) => {
+  console.log("-----------------------------------------");
   console.log("🔔 WEBHOOK ACTIVADO: Recibiendo datos de Vapi...");
+
   const payload = req.body.message || req.body;
-  console.log("Tipo de evento:", payload.type);
   const { type, call } = payload;
 
+  console.log("Tipo de evento:", type);
+
   try {
-    // FILTRO: Solo procesamos el reporte final para evitar errores de "Missing ID"
+    // FILTRO: Solo procesamos el reporte final
     if (type !== "end-of-call-report") {
       return res.status(200).json({ message: "Evento ignorado" });
     }
 
-    const metadata = call?.metadata || {};
+    if (!call) {
+      console.error("❌ No se recibió el objeto 'call' en el webhook");
+      return res.status(200).json({ error: "No call data" });
+    }
+
+    const metadata = call.metadata || {};
+
+    // --- EXTRACCIÓN ROBUSTA DE DATOS ---
+
+    // 1. Duración: Buscamos en durationSeconds, luego en duration.
+    const rawDuration = call.durationSeconds || call.duration || 0;
+    const finalDuration = Math.round(Number(rawDuration));
+
+    // 2. COSTO (MUY IMPORTANTE):
+    // Vapi puede enviarlo en 'cost', 'totalCost' o dentro de 'analysis.cost'
+    const finalCost = Number(
+      call.cost || call.totalCost || (call.analysis && call.analysis.cost) || 0,
+    );
 
     console.log(`💾 Guardando consumo para la llamada: ${call.id}`);
-    console.log("--- ESTRUCTURA COMPLETA DE CALL ---");
-    console.log(JSON.stringify(call, null, 2));
-    console.log("----------------------------------");
+    console.log(
+      `📊 Datos Finales -> Duración: ${finalDuration}s | Costo: ${finalCost}`,
+    );
 
+    // Registro en la base de datos
     await dynamoDB.send(
       new PutCommand({
         TableName: "ConsumptionHistory",
         Item: {
-          id: call.id,
-          businessId: metadata.businessId,
-          businessName: metadata.businessName,
-          phone: call.customer?.number,
-          duration: `${Math.round(call.durationSeconds || call.duration)} seg`,
-          cost: call.cost || 0,
-          status: call.endedReason,
+          id: String(call.id), // Forzamos String para evitar Type Mismatch
+          businessId: metadata.businessId || "desconocido",
+          businessName: metadata.businessName || "N/A",
+          phone: call.customer?.number || "N/A",
+          duration: `${finalDuration} seg`,
+          cost: finalCost, // Guardado como número real para cálculos
+          status: call.endedReason || "completed",
           timestamp: new Date().toISOString(),
         },
       }),
     );
 
     console.log("✅ Registro en ConsumptionHistory exitoso");
+    console.log("-----------------------------------------");
+
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("❌ ERROR WEBHOOK:", error.message);
+    console.error("❌ ERROR CRÍTICO EN WEBHOOK:", error.message);
+    // Respondemos 200 para que Vapi no marque error de servidor, pero logueamos el fallo
     return res.status(200).json({ error: error.message });
   }
 };
