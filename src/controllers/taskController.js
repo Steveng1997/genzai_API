@@ -37,10 +37,10 @@ exports.completeTask = async (req, res) => {
   }
 };
 
-// --- WEBHOOK PARA VAPI ---
-
 exports.handleVapiWebhook = async (req, res) => {
+  console.log("🔔 WEBHOOK ACTIVADO: Recibiendo datos de Vapi...");
   const payload = req.body.message || req.body;
+  console.log("Tipo de evento:", payload.type);
   const { type, call } = payload;
 
   try {

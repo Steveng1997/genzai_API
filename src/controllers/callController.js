@@ -49,7 +49,8 @@ exports.makeSmartCall = async (req, res) => {
                 name: cliente.fullName || "Cliente",
               },
               assistantId: config.assistantId,
-              phoneNumberId: config.vapiPhoneNumberId, // Dinámico desde DB
+              phoneNumberId: config.vapiPhoneNumberId,
+              serverUrl: "https://fn5q3yfyc3.us-east-1.awsapprunner.com/api/task/webhook-vapi",
               metadata: {
                 businessId: businessId,
                 businessName: config.businessName || "Empresa",
