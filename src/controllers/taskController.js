@@ -57,13 +57,13 @@ exports.handleVapiWebhook = async (req, res) => {
       new PutCommand({
         TableName: "ConsumptionHistory",
         Item: {
-          id: call.id, // Partition Key
-          businessId: metadata.businessId || "desconocido",
-          businessName: metadata.businessName || "N/A",
-          phone: call.customer?.number || "N/A",
-          duration: `${Math.round(call.duration || 0)} seg`,
+          id: call.id,
+          businessId: metadata.businessId,
+          businessName: metadata.businessName,
+          phone: call.customer?.number,
+          duration: `${Math.round(call.durationSeconds || call.duration)} seg`,
           cost: call.cost || 0,
-          status: call.endedReason || "completed",
+          status: call.endedReason,
           timestamp: new Date().toISOString(),
         },
       }),
