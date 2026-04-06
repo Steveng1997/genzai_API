@@ -5,7 +5,7 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-// 1. Obtener todas las tareas para mostrar en Flutter
+// 1. Obtener tareas para Flutter
 exports.getTasks = async (req, res) => {
   try {
     const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
@@ -16,7 +16,7 @@ exports.getTasks = async (req, res) => {
   }
 };
 
-// 2. Actualizar estado de una tarea desde Flutter
+// 2. Actualizar estado de tarea desde Flutter
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
   try {
@@ -36,28 +36,30 @@ exports.completeTask = async (req, res) => {
 };
 
 /**
- * 3. WEBHOOK UNIFICADO PARA VAPI (VERSIÓN ROBUSTA)
+ * 3. WEBHOOK UNIFICADO PARA VAPI
+ * Versión corregida para garantizar la persistencia en DynamoDB
  */
 exports.handleVapiWebhook = async (req, res) => {
-  // Capturamos TODO lo que llegue para debuggear
-  console.log("📡 BODY RECIBIDO COMPLETO:", JSON.stringify(req.body));
+  // Log detallado para depuración en App Runner
+  console.log("📡 Payload recibido:", JSON.stringify(req.body));
 
-  const message = req.body.message || req.body;
-  const type = message.type;
+  // Vapi puede enviar los datos en 'message' o directamente en el body
+  const payload = req.body.message || req.body;
+  const type = payload.type;
+  const callData = payload.call || {};
 
   try {
-    // Si es un reporte de llamada, guardamos SI O SI
-    if (type === "end-of-call-report" || req.body.call) {
-      const callData = message.call || req.body.call || {};
+    // Verificamos si es el reporte final o si al menos tenemos datos de la llamada
+    if (type === "end-of-call-report" || callData.id) {
       const meta = callData.metadata || {};
 
-      console.log("Attempting DynamoDB Put...");
+      console.log("Attempting DynamoDB Put for call:", callData.id);
 
       await dynamoDB.send(
         new PutCommand({
           TableName: "ConsumptionHistory",
           Item: {
-            // CLAVE PRIMARIA OBLIGATORIA 'id'
+            // CRÍTICO: Asegúrate de que este nombre coincida con la Partition Key de tu tabla
             id: callData.id || `vapi_${Date.now()}`,
             businessId: meta.businessId || "genzai_pro_01",
             phone: callData.customer?.number || "Desconocido",
@@ -65,17 +67,18 @@ exports.handleVapiWebhook = async (req, res) => {
             cost: callData.cost || 0,
             timestamp: new Date().toISOString(),
             businessName: meta.businessName || "autos",
+            status: callData.endedReason || "completed",
           },
         }),
       );
       console.log("✅ Registro en ConsumptionHistory exitoso");
     }
 
-    // Respuesta rápida a Vapi para evitar timeouts
+    // Siempre respondemos 200 a Vapi para evitar reintentos innecesarios
     return res.status(200).json({ success: true });
   } catch (e) {
-    // Si hay error de DynamoDB, AQUÍ aparecerá en tus logs de App Runner
-    console.error("❌ ERROR CRÍTICO WEBHOOK:", e.message);
+    // El error aparecerá en "Service logs" de App Runner
+    console.error("❌ ERROR EN WEBHOOK:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
