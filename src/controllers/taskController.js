@@ -5,8 +5,6 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-// --- FUNCIONES PARA FLUTTER ---
-
 exports.getTasks = async (req, res) => {
   try {
     const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
@@ -33,13 +31,10 @@ exports.completeTask = async (req, res) => {
   }
 };
 
-// --- WEBHOOK VAPI (EXTRACCIÓN ROBUSTA) ---
-
 exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   const { type, call } = payload;
 
-  // Solo procesamos el reporte final de la llamada
   if (type !== "end-of-call-report") {
     return res.status(200).json({ message: "Evento ignorado" });
   }
@@ -47,25 +42,22 @@ exports.handleVapiWebhook = async (req, res) => {
   try {
     const metadata = call?.metadata || {};
 
-    // 1. Extracción de Duración: Intentamos varias fuentes de Vapi
-    // Si durationSeconds es 0, restamos el tiempo de fin menos el de inicio (Fallback)
     let seconds =
       call?.durationSeconds || payload?.durationSeconds || call?.duration || 0;
-
     if (Number(seconds) === 0 && call?.startedAt && call?.endedAt) {
-      const start = new Date(call.startedAt);
-      const end = new Date(call.endedAt);
-      seconds = (end - start) / 1000;
+      seconds = (new Date(call.endedAt) - new Date(call.startedAt)) / 1000;
     }
 
-    // 2. Extracción de Costo: Buscamos en raíz, en call y en el análisis
-    const cost = call?.cost || payload?.cost || call?.analysis?.cost || 0;
+    const totalSeconds = Math.round(Number(seconds) || 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = totalSeconds % 60;
+    const durationFormatted = `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 
-    const finalDuration = Math.round(Number(seconds) || 0);
-    const finalCost = Number(cost) || 0;
+    const rawCost = call?.cost || payload?.cost || call?.analysis?.cost || 0;
+    const finalCost = parseFloat(Number(rawCost).toFixed(2));
 
     console.log(
-      `💾 Procesando: ${call?.id} | Segundos: ${finalDuration} | Costo: ${finalCost}`,
+      `💾 Guardando: ${call?.id} | Duración: ${durationFormatted} | Costo: ${finalCost}`,
     );
 
     await dynamoDB.send(
@@ -76,7 +68,7 @@ exports.handleVapiWebhook = async (req, res) => {
           businessId: metadata.businessId || "unknown",
           businessName: metadata.businessName || "N/A",
           phone: call?.customer?.number || "N/A",
-          duration: `${finalDuration} seg`,
+          duration: durationFormatted,
           cost: finalCost,
           status: call?.endedReason || "completed",
           timestamp: new Date().toISOString(),
