@@ -54,7 +54,8 @@ exports.handleVapiWebhook = async (req, res) => {
     const durationFormatted = `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 
     const rawCost = call?.cost || payload?.cost || call?.analysis?.cost || 0;
-    const finalCost = parseFloat(Number(rawCost).toFixed(2));
+    // Cambiado a String para mantener el .10 en la base de datos
+    const finalCost = Number(rawCost).toFixed(2);
 
     console.log(
       `💾 Guardando: ${call?.id} | Duración: ${durationFormatted} | Costo: ${finalCost}`,
