@@ -51,6 +51,7 @@ exports.setupAssistant = async (req, res) => {
           assistantId: "4c266662-68db-4046-a13f-8c021c84919c", // ID de Vapi
           openaiAssistantId: assistant.id,
           businessName: product,
+          vapiPhoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
           paymentId: business.paymentId || "N/A",
           updatedAt: new Date().toISOString(),
         },
