@@ -42,7 +42,8 @@ exports.makeSmartCall = async (req, res) => {
             assistantId: config.assistantId,
             // --- CORRECCIÓN AQUÍ: Debes pasar el ID del número que compraste en Vapi ---
             phoneNumberId:
-              config.vapiPhoneNumberId || "TU_PHONE_NUMBER_ID_DE_VAPI",
+              config.vapiPhoneNumberId ||
+              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             metadata: {
               businessId: businessId,
               businessName: config.businessName,
