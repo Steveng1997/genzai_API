@@ -5,7 +5,9 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-// 1. Obtener tareas para Flutter
+// --- FUNCIONES PARA FLUTTER ---
+
+// Obtener todas las tareas
 exports.getTasks = async (req, res) => {
   try {
     const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
@@ -16,7 +18,7 @@ exports.getTasks = async (req, res) => {
   }
 };
 
-// 2. Actualizar estado de tarea desde Flutter
+// Actualizar estado de una tarea
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
   try {
@@ -35,50 +37,42 @@ exports.completeTask = async (req, res) => {
   }
 };
 
-/**
- * 3. WEBHOOK UNIFICADO PARA VAPI
- * Versión corregida para garantizar la persistencia en DynamoDB
- */
-exports.handleVapiWebhook = async (req, res) => {
-  // Log detallado para depuración en App Runner
-  console.log("📡 Payload recibido:", JSON.stringify(req.body));
+// --- WEBHOOK PARA VAPI ---
 
-  // Vapi puede enviar los datos en 'message' o directamente en el body
+exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
-  const type = payload.type;
-  const callData = payload.call || {};
+  const { type, call } = payload;
 
   try {
-    // Verificamos si es el reporte final o si al menos tenemos datos de la llamada
-    if (type === "end-of-call-report" || callData.id) {
-      const meta = callData.metadata || {};
-
-      console.log("Attempting DynamoDB Put for call:", callData.id);
-
-      await dynamoDB.send(
-        new PutCommand({
-          TableName: "ConsumptionHistory",
-          Item: {
-            // CRÍTICO: Asegúrate de que este nombre coincida con la Partition Key de tu tabla
-            id: callData.id || `vapi_${Date.now()}`,
-            businessId: meta.businessId || "genzai_pro_01",
-            phone: callData.customer?.number || "Desconocido",
-            duration: `${Math.round(callData.duration || 0)} seg`,
-            cost: callData.cost || 0,
-            timestamp: new Date().toISOString(),
-            businessName: meta.businessName || "autos",
-            status: callData.endedReason || "completed",
-          },
-        }),
-      );
-      console.log("✅ Registro en ConsumptionHistory exitoso");
+    // FILTRO: Solo procesamos el reporte final para evitar errores de "Missing ID"
+    if (type !== "end-of-call-report") {
+      return res.status(200).json({ message: "Evento ignorado" });
     }
 
-    // Siempre respondemos 200 a Vapi para evitar reintentos innecesarios
+    const metadata = call?.metadata || {};
+
+    console.log(`💾 Guardando consumo para la llamada: ${call.id}`);
+
+    await dynamoDB.send(
+      new PutCommand({
+        TableName: "ConsumptionHistory",
+        Item: {
+          id: call.id, // Partition Key
+          businessId: metadata.businessId || "desconocido",
+          businessName: metadata.businessName || "N/A",
+          phone: call.customer?.number || "N/A",
+          duration: `${Math.round(call.duration || 0)} seg`,
+          cost: call.cost || 0,
+          status: call.endedReason || "completed",
+          timestamp: new Date().toISOString(),
+        },
+      }),
+    );
+
+    console.log("✅ Registro en ConsumptionHistory exitoso");
     return res.status(200).json({ success: true });
-  } catch (e) {
-    // El error aparecerá en "Service logs" de App Runner
-    console.error("❌ ERROR EN WEBHOOK:", e.message);
-    return res.status(500).json({ error: e.message });
+  } catch (error) {
+    console.error("❌ ERROR WEBHOOK:", error.message);
+    return res.status(200).json({ error: error.message });
   }
 };
