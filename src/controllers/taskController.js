@@ -37,32 +37,27 @@ exports.completeTask = async (req, res) => {
 
 /**
  * 3. WEBHOOK UNIFICADO PARA VAPI
- * Este endpoint procesa el fin de la llamada y la extracción de datos.
+ * Corregido para satisfacer la Partition Key "id" de DynamoDB
  */
 exports.handleVapiWebhook = async (req, res) => {
-  // Soporta ambos formatos de envío de Vapi
   const payload = req.body.message || req.body;
   const type = payload.type;
 
-  // Log para verificar en App Runner si Vapi está llegando
   console.log(`📡 Solicitud Webhook recibida. Tipo: ${type}`);
 
   try {
-    // EVENTO: Reporte final de la llamada (Para Consumo)
     if (type === "end-of-call-report") {
       const callData = payload.call || {};
       const meta = callData.metadata || {};
       const analysis = payload.analysis || {};
 
-      // Guardar en ConsumptionHistory
+      // CORRECCIÓN CRÍTICA: Se agrega el campo 'id' que la tabla exige
       await dynamoDB.send(
         new PutCommand({
           TableName: "ConsumptionHistory",
           Item: {
-            // Clave de partición obligatoria según tu tabla
+            id: callData.id || `call_${Date.now()}`, // <--- CLAVE PRIMARIA OBLIGATORIA
             businessId: meta.businessId || "genzai_pro_01",
-            // ID único de llamada para evitar sobrescribir registros si usas Sort Key
-            callId: callData.id,
             phone: callData.customer?.number || "Desconocido",
             duration: `${Math.round(callData.duration || 0)} seg`,
             cost: callData.cost || 0,
@@ -74,8 +69,7 @@ exports.handleVapiWebhook = async (req, res) => {
       );
       console.log("✅ ConsumptionHistory actualizado exitosamente.");
 
-      // EVENTO: Crear Tarea si la IA detectó información estructurada
-      // Si configuraste "Structured Data" en Vapi, aquí se crean las tareas automáticamente
+      // Lógica para crear Tareas (Tabla 'Tasks' usa 'taskId' como clave)
       if (
         analysis.structuredData &&
         Object.keys(analysis.structuredData).length > 0
@@ -100,7 +94,6 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
-    // Vapi requiere un 200 OK para confirmar recepción
     res.status(200).json({ success: true });
   } catch (e) {
     console.error("❌ Error procesando Webhook de Vapi:", e.message);
