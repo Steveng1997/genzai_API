@@ -5,6 +5,8 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 exports.getTasks = async (req, res) => {
   try {
     const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
@@ -40,20 +42,32 @@ exports.handleVapiWebhook = async (req, res) => {
   }
 
   try {
+    // 1. Espera de 3 segundos para asegurar que Vapi procese los costos
+    console.log("⏳ Esperando 3 segundos para que Vapi calcule costos...");
+    await delay(6000);
+
+    // 2. LOG DE INSPECCIÓN: Aquí verás todas las columnas disponibles en AWS
+    console.log("--- ESTRUCTURA DE CALL DESPUÉS DEL DELAY ---");
+    console.log(JSON.stringify(call, null, 2));
+    console.log("--------------------------------------------");
+
     const metadata = call?.metadata || {};
 
-    // 1. Cálculo de Duración (Si falla el campo directo, resta fechas)
+    // 3. Extracción con soporte para múltiples campos
     let seconds = call?.durationSeconds || call?.duration || 0;
-    if (seconds === 0 && call?.startedAt && call?.endedAt) {
+
+    // Cálculo manual si sigue en 0
+    if (Number(seconds) === 0 && call?.startedAt && call?.endedAt) {
       seconds = (new Date(call.endedAt) - new Date(call.startedAt)) / 1000;
     }
-    const finalDuration = Math.round(Number(seconds) || 0);
 
-    // 2. Extracción de Costo (Busca en raíz y en análisis)
-    const finalCost = Number(call?.cost || call?.analysis?.cost || 0);
+    const finalDuration = Math.round(Number(seconds) || 0);
+    const finalCost = Number(
+      call?.cost || call?.analysis?.cost || call?.totalCost || 0,
+    );
 
     console.log(
-      `💾 Guardando: ${call.id} | Duración: ${finalDuration}s | Costo: ${finalCost}`,
+      `💾 Guardando en DB -> Duración: ${finalDuration}s | Costo: ${finalCost}`,
     );
 
     await dynamoDB.send(
