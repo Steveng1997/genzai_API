@@ -36,67 +36,46 @@ exports.completeTask = async (req, res) => {
 };
 
 /**
- * 3. WEBHOOK UNIFICADO PARA VAPI
- * Corregido para satisfacer la Partition Key "id" de DynamoDB
+ * 3. WEBHOOK UNIFICADO PARA VAPI (VERSIÓN ROBUSTA)
  */
 exports.handleVapiWebhook = async (req, res) => {
-  const payload = req.body.message || req.body;
-  const type = payload.type;
+  // Capturamos TODO lo que llegue para debuggear
+  console.log("📡 BODY RECIBIDO COMPLETO:", JSON.stringify(req.body));
 
-  console.log(`📡 Solicitud Webhook recibida. Tipo: ${type}`);
+  const message = req.body.message || req.body;
+  const type = message.type;
 
   try {
-    if (type === "end-of-call-report") {
-      const callData = payload.call || {};
+    // Si es un reporte de llamada, guardamos SI O SI
+    if (type === "end-of-call-report" || req.body.call) {
+      const callData = message.call || req.body.call || {};
       const meta = callData.metadata || {};
-      const analysis = payload.analysis || {};
 
-      // CORRECCIÓN CRÍTICA: Se agrega el campo 'id' que la tabla exige
+      console.log("Attempting DynamoDB Put...");
+
       await dynamoDB.send(
         new PutCommand({
           TableName: "ConsumptionHistory",
           Item: {
-            id: callData.id || `call_${Date.now()}`, // <--- CLAVE PRIMARIA OBLIGATORIA
+            // CLAVE PRIMARIA OBLIGATORIA 'id'
+            id: callData.id || `vapi_${Date.now()}`,
             businessId: meta.businessId || "genzai_pro_01",
             phone: callData.customer?.number || "Desconocido",
             duration: `${Math.round(callData.duration || 0)} seg`,
             cost: callData.cost || 0,
             timestamp: new Date().toISOString(),
             businessName: meta.businessName || "autos",
-            status: callData.endedReason || "completed",
           },
         }),
       );
-      console.log("✅ ConsumptionHistory actualizado exitosamente.");
-
-      // Lógica para crear Tareas (Tabla 'Tasks' usa 'taskId' como clave)
-      if (
-        analysis.structuredData &&
-        Object.keys(analysis.structuredData).length > 0
-      ) {
-        const taskData = analysis.structuredData;
-
-        await dynamoDB.send(
-          new PutCommand({
-            TableName: "Tasks",
-            Item: {
-              taskId: `task_${Date.now()}`,
-              businessId: meta.businessId || "genzai_pro_01",
-              description:
-                taskData.task || taskData.summary || "Seguimiento de llamada",
-              customerName: callData.customer?.name || "N/A",
-              isCompleted: false,
-              createdAt: new Date().toISOString(),
-            },
-          }),
-        );
-        console.log("✅ Nueva tarea creada desde el análisis de la IA.");
-      }
+      console.log("✅ Registro en ConsumptionHistory exitoso");
     }
 
-    res.status(200).json({ success: true });
+    // Respuesta rápida a Vapi para evitar timeouts
+    return res.status(200).json({ success: true });
   } catch (e) {
-    console.error("❌ Error procesando Webhook de Vapi:", e.message);
-    res.status(500).json({ error: e.message });
+    // Si hay error de DynamoDB, AQUÍ aparecerá en tus logs de App Runner
+    console.error("❌ ERROR CRÍTICO WEBHOOK:", e.message);
+    return res.status(500).json({ error: e.message });
   }
 };
