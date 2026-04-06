@@ -5,6 +5,7 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
+// Obtener todas las tareas (para tu App de Flutter)
 exports.getTasks = async (req, res) => {
   try {
     const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
@@ -14,6 +15,7 @@ exports.getTasks = async (req, res) => {
   }
 };
 
+// Marcar tarea como completada
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
   try {
@@ -31,6 +33,49 @@ exports.completeTask = async (req, res) => {
   }
 };
 
+// NUEVA FUNCIÓN: Riley crea una tarea durante la llamada
+exports.handleRileyTool = async (req, res) => {
+  try {
+    const payload = req.body.message || req.body;
+    // Vapi envía los datos en toolCalls cuando Riley usa una herramienta
+    const toolCall = payload.toolCalls?.[0] || payload.toolCallList?.[0];
+
+    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
+
+    const { titulo, detalle } = toolCall.function.arguments;
+
+    const newTask = {
+      taskId: `task_${Date.now()}`,
+      title: titulo,
+      description: detalle || "Sin detalles adicionales",
+      isCompleted: false,
+      createdAt: new Date().toISOString(),
+      source: "Riley Assistant",
+    };
+
+    await dynamoDB.send(
+      new PutCommand({
+        TableName: "Tasks",
+        Item: newTask,
+      }),
+    );
+
+    // Esta respuesta le confirma a Riley que la tarea se guardó
+    return res.status(200).json({
+      results: [
+        {
+          toolCallId: toolCall.id,
+          result: "Tarea guardada exitosamente en el sistema.",
+        },
+      ],
+    });
+  } catch (e) {
+    console.error("❌ Error en Riley Tool:", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+};
+
+// Webhook para el historial de consumo (al finalizar la llamada)
 exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   const { type, call } = payload;
@@ -54,11 +99,10 @@ exports.handleVapiWebhook = async (req, res) => {
     const durationFormatted = `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 
     const rawCost = call?.cost || payload?.cost || call?.analysis?.cost || 0;
-    // Cambiado a String para mantener el .10 en la base de datos
     const finalCost = Number(rawCost).toFixed(2);
 
     console.log(
-      `💾 Guardando: ${call?.id} | Duración: ${durationFormatted} | Costo: ${finalCost}`,
+      `💾 Registro de llamada: ${call?.id} | Duración: ${durationFormatted} | Costo: ${finalCost}`,
     );
 
     await dynamoDB.send(
