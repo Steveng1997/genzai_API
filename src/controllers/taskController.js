@@ -5,103 +5,76 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-// --- FUNCIONES PARA FLUTTER ---
-
-// Obtener todas las tareas
 exports.getTasks = async (req, res) => {
   try {
     const data = await dynamoDB.send(new ScanCommand({ TableName: "Tasks" }));
     res.status(200).json(data.Items);
   } catch (e) {
-    console.error("❌ Error al obtener tareas:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
-// Actualizar estado de una tarea
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
   try {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: "Tasks",
-        Key: { taskId: taskId },
+        Key: { taskId },
         UpdateExpression: "set isCompleted = :val",
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
     );
     res.status(200).json({ success: true });
   } catch (e) {
-    console.error("❌ Error al actualizar tarea:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
-// --- WEBHOOK VAPI (CORREGIDO) ---
-
 exports.handleVapiWebhook = async (req, res) => {
-  console.log("-----------------------------------------");
-  console.log("🔔 WEBHOOK ACTIVADO: Recibiendo datos de Vapi...");
-
   const payload = req.body.message || req.body;
   const { type, call } = payload;
 
-  console.log("Tipo de evento:", type);
+  if (type !== "end-of-call-report") {
+    return res.status(200).json({ message: "Evento ignorado" });
+  }
 
   try {
-    // FILTRO: Solo procesamos el reporte final
-    if (type !== "end-of-call-report") {
-      return res.status(200).json({ message: "Evento ignorado" });
+    const metadata = call?.metadata || {};
+
+    // 1. Cálculo de Duración (Si falla el campo directo, resta fechas)
+    let seconds = call?.durationSeconds || call?.duration || 0;
+    if (seconds === 0 && call?.startedAt && call?.endedAt) {
+      seconds = (new Date(call.endedAt) - new Date(call.startedAt)) / 1000;
     }
+    const finalDuration = Math.round(Number(seconds) || 0);
 
-    if (!call) {
-      console.error("❌ No se recibió el objeto 'call' en el webhook");
-      return res.status(200).json({ error: "No call data" });
-    }
+    // 2. Extracción de Costo (Busca en raíz y en análisis)
+    const finalCost = Number(call?.cost || call?.analysis?.cost || 0);
 
-    const metadata = call.metadata || {};
-
-    // --- EXTRACCIÓN ROBUSTA DE DATOS ---
-
-    // 1. Duración: Buscamos en durationSeconds, luego en duration.
-    const rawDuration = call.durationSeconds || call.duration || 0;
-    const finalDuration = Math.round(Number(rawDuration));
-
-    // 2. COSTO (MUY IMPORTANTE):
-    // Vapi puede enviarlo en 'cost', 'totalCost' o dentro de 'analysis.cost'
-    const finalCost = Number(
-      call.cost || call.totalCost || (call.analysis && call.analysis.cost) || 0,
-    );
-
-    console.log(`💾 Guardando consumo para la llamada: ${call.id}`);
     console.log(
-      `📊 Datos Finales -> Duración: ${finalDuration}s | Costo: ${finalCost}`,
+      `💾 Guardando: ${call.id} | Duración: ${finalDuration}s | Costo: ${finalCost}`,
     );
 
-    // Registro en la base de datos
     await dynamoDB.send(
       new PutCommand({
         TableName: "ConsumptionHistory",
         Item: {
-          id: String(call.id), // Forzamos String para evitar Type Mismatch
-          businessId: metadata.businessId || "desconocido",
+          id: String(call.id),
+          businessId: metadata.businessId || "unknown",
           businessName: metadata.businessName || "N/A",
           phone: call.customer?.number || "N/A",
           duration: `${finalDuration} seg`,
-          cost: finalCost, // Guardado como número real para cálculos
+          cost: finalCost,
           status: call.endedReason || "completed",
           timestamp: new Date().toISOString(),
         },
       }),
     );
 
-    console.log("✅ Registro en ConsumptionHistory exitoso");
-    console.log("-----------------------------------------");
-
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("❌ ERROR CRÍTICO EN WEBHOOK:", error.message);
-    // Respondemos 200 para que Vapi no marque error de servidor, pero logueamos el fallo
+    console.error("❌ ERROR WEBHOOK:", error.message);
     return res.status(200).json({ error: error.message });
   }
 };
