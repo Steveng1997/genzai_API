@@ -52,6 +52,9 @@ exports.handleVapiWebhook = async (req, res) => {
     const metadata = call?.metadata || {};
 
     console.log(`💾 Guardando consumo para la llamada: ${call.id}`);
+    console.log("--- ESTRUCTURA COMPLETA DE CALL ---");
+    console.log(JSON.stringify(call, null, 2));
+    console.log("----------------------------------");
 
     await dynamoDB.send(
       new PutCommand({
