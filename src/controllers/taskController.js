@@ -5,11 +5,9 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-const TABLE_TASKS = process.env.DYNAMODB_TABLE_TASK || "Tasks";
-const TABLE_HISTORY =
-  process.env.DYNAMODB_TABLE_HISTORY || "ConsumptionHistory";
+const TABLE_TASKS = "Tasks";
+const TABLE_HISTORY = "ConsumptionHistory";
 
-// Obtener tareas filtradas por compañía
 exports.getTasks = async (req, res) => {
   const { company } = req.query;
   try {
@@ -26,14 +24,13 @@ exports.getTasks = async (req, res) => {
   }
 };
 
-// ESTA ES LA FUNCIÓN QUE CAUSABA EL ERROR (Asegúrate de que se llame completeTask)
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
   try {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_TASKS,
-        Key: { taskId: Number(taskId) }, // Asegúrate de que taskId sea el tipo correcto (N o S)
+        Key: { taskId: taskId },
         UpdateExpression: "set isCompleted = :val",
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
@@ -48,13 +45,12 @@ exports.handleRileyTool = async (req, res) => {
   try {
     const payload = req.body.message || req.body;
     const toolCall = payload.toolCalls?.[0] || payload.toolCallList?.[0];
-
     if (!toolCall) return res.status(400).json({ error: "No tool call data" });
 
     const { titulo, detalle, company } = toolCall.function.arguments;
 
     const newTask = {
-      taskId: Date.now(),
+      taskId: `TASK-${Date.now()}`,
       company: company,
       title: titulo,
       description: detalle || "Sin detalles",
@@ -66,10 +62,11 @@ exports.handleRileyTool = async (req, res) => {
     await dynamoDB.send(
       new PutCommand({ TableName: TABLE_TASKS, Item: newTask }),
     );
-
-    return res.status(200).json({
-      results: [{ toolCallId: toolCall.id, result: "Tarea guardada." }],
-    });
+    return res
+      .status(200)
+      .json({
+        results: [{ toolCallId: toolCall.id, result: "Tarea guardada." }],
+      });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -81,21 +78,37 @@ exports.handleVapiWebhook = async (req, res) => {
     return res.status(200).json({ message: "Ignorado" });
 
   try {
-    const { call } = payload;
-    const metadata = call?.metadata || {};
+    const { call, summary, transcript } = payload;
+    const company = call?.metadata?.company || "unknown";
+
+    const historyItem = {
+      id: String(call?.id || Date.now()),
+      company: company,
+      phone: call?.customer?.number || "N/A",
+      duration: call?.durationSeconds || 0,
+      timestamp: new Date().toISOString(),
+      summary: summary || "Sin resumen",
+    };
 
     await dynamoDB.send(
-      new PutCommand({
-        TableName: TABLE_HISTORY,
-        Item: {
-          id: String(call?.id || Date.now()),
-          company: metadata.company || "unknown",
-          phone: call?.customer?.number || "N/A",
-          duration: call?.durationSeconds || 0,
-          timestamp: new Date().toISOString(),
-        },
-      }),
+      new PutCommand({ TableName: TABLE_HISTORY, Item: historyItem }),
     );
+
+    if (summary) {
+      const callTask = {
+        taskId: `CALL-${Date.now()}`,
+        company: company,
+        title: `Llamada con ${call?.customer?.name || "Cliente"}`,
+        description: summary,
+        isCompleted: true,
+        createdAt: new Date().toISOString(),
+        source: "Vapi Webhook",
+      };
+      await dynamoDB.send(
+        new PutCommand({ TableName: TABLE_TASKS, Item: callTask }),
+      );
+    }
+
     return res.status(200).json({ success: true });
   } catch (error) {
     return res.status(200).json({ error: error.message });

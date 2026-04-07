@@ -5,31 +5,26 @@ const axios = require("axios");
 exports.makeSmartCall = async (req, res) => {
   try {
     const { company } = req.body;
-
-    if (!company) {
+    if (!company)
       return res
         .status(400)
-        .json({ message: "La compañía es requerida para filtrar clientes" });
-    }
+        .json({ message: "ID de empresa no proporcionado" });
 
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
-        TableName: process.env.DYNAMODB_TABLE_AI || "AIConfigs",
+        TableName: "AIConfigs",
         Key: { businessId: company },
       }),
     );
 
-    if (!config || !config.assistantId) {
+    if (!config)
       return res
         .status(404)
-        .json({
-          message: "No se encontró configuración de IA para esta empresa",
-        });
-    }
+        .json({ message: "No hay IA configurada para " + company });
 
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
-        TableName: process.env.DYNAMODB_TABLE_LEADS || "Clients",
+        TableName: "Clients",
         FilterExpression: "company = :c",
         ExpressionAttributeValues: { ":c": company },
       }),
@@ -38,46 +33,31 @@ exports.makeSmartCall = async (req, res) => {
     if (!clientes || clientes.length === 0) {
       return res
         .status(404)
-        .json({ message: "No hay clientes registrados para esta compañía" });
+        .json({ message: "No hay clientes registrados para " + company });
     }
 
-    const results = await Promise.all(
-      clientes.map(async (cliente) => {
-        let phone = cliente.phone.toString().replace(/\D/g, "");
-        if (phone.length === 10) phone = "57" + phone;
-        const formattedPhone = phone.startsWith("+") ? phone : "+" + phone;
-
-        try {
-          await axios.post(
-            "https://api.vapi.ai/call/phone",
-            {
-              customer: {
-                number: formattedPhone,
-                name: cliente.fullName || "Cliente",
-              },
-              assistantId: config.assistantId,
-              phoneNumberId: config.vapiPhoneNumberId,
-              metadata: { company: company },
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-            },
-          );
-          return { phone: formattedPhone, status: "success" };
-        } catch (err) {
-          return { phone: formattedPhone, status: "error" };
-        }
-      }),
-    );
-
-    res.status(200).json({
-      success: true,
-      message: `Campaña procesada para ${clientes.length} clientes`,
-      results,
+    const calls = clientes.map((cliente) => {
+      return axios.post(
+        "https://api.vapi.ai/call/phone",
+        {
+          customer: { number: cliente.phone, name: cliente.fullName },
+          assistantId: config.assistantId,
+          phoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
+          metadata: { company: company },
+        },
+        {
+          headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+        },
+      );
     });
+
+    await Promise.all(calls);
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: `Campaña iniciada para ${clientes.length} clientes de ${company}`,
+      });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
