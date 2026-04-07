@@ -19,6 +19,8 @@ exports.setupAssistant = async (req, res) => {
         .json({ message: "Identificación de empresa y usuario requerida." });
     }
 
+    console.log(`[Setup] Buscando suscripción para: ${email} en ${company}`);
+
     const paymentsResponse = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_PAYMENTS,
@@ -43,7 +45,7 @@ exports.setupAssistant = async (req, res) => {
 
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company}`,
-      instructions: `Eres Riley, la asistente de "${company}". Especialista en "${productDescription}". Solo usa tus archivos para responder. Si detectas un compromiso, usa la herramienta de creación de tareas.`,
+      instructions: `Eres Riley, la asistente de "${company}". Especialista en "${productDescription}". Solo usa tus archivos para responder. Si detectas un compromiso o tarea, usa la herramienta create_task.`,
       model: "gpt-4o",
       tools: [
         { type: "file_search" },
@@ -76,21 +78,23 @@ exports.setupAssistant = async (req, res) => {
       ownerEmail: email,
       openaiAssistantId: assistant.id,
       assistantId: "4c266662-68db-4046-a13f-8c021c84919c",
+      vapiPhoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
       businessName: company,
+      product: productDescription,
       updatedAt: new Date().toISOString(),
     };
 
+    console.log(`[Setup] Guardando configuración en AIConfigs para ${company}`);
     await dynamoDB.send(
       new PutCommand({ TableName: TABLE_AI_CONFIGS, Item: aiConfigItem }),
     );
 
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Entrenamiento completado para " + company,
-      });
+    res.status(200).json({
+      success: true,
+      message: "Entrenamiento completado para " + company,
+    });
   } catch (e) {
+    console.error("[Setup Error]", e);
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {
     files.forEach((f) => {
