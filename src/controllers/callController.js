@@ -7,8 +7,9 @@ exports.makeSmartCall = async (req, res) => {
   console.log(`\n--- INICIO DE CAMPAÑA: ${company} ---`);
 
   try {
-    if (!company)
+    if (!company) {
       return res.status(400).json({ message: "Compañía requerida" });
+    }
 
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
@@ -21,10 +22,6 @@ exports.makeSmartCall = async (req, res) => {
       console.log(`❌ Configuración no encontrada para ${company}`);
       return res.status(404).json({ message: "No hay IA configurada" });
     }
-
-    console.log(
-      `✅ Configuración cargada. AssistantId: ${config.assistantId}, PhoneId: ${config.vapiPhoneNumberId}`,
-    );
 
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
@@ -39,23 +36,33 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(404).json({ message: "No hay clientes" });
     }
 
-    console.log(`📞 Intentando llamar a ${clientes.length} clientes...`);
-
     const calls = clientes.map(async (cliente) => {
       try {
-        console.log(`>> Llamando a ${cliente.fullName} (${cliente.phone})...`);
+        let rawPhone = cliente.phone.toString().replace(/\s+/g, "");
+        let formattedPhone = rawPhone.startsWith("+")
+          ? rawPhone
+          : `+57${rawPhone}`;
+
+        console.log(`>> Intentando: ${cliente.fullName} -> ${formattedPhone}`);
+
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
-            customer: { number: cliente.phone, name: cliente.fullName },
+            customer: {
+              number: formattedPhone,
+              name: cliente.fullName,
+            },
             assistantId: config.assistantId,
             phoneNumberId:
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             metadata: { company: company },
           },
-          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
+          {
+            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+          },
         );
+
         console.log(
           `✅ Éxito cliente ${cliente.fullName}: ID ${response.data.id}`,
         );
