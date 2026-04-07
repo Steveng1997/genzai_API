@@ -11,7 +11,6 @@ exports.login = async (req, res) => {
     return res.status(400).json({ message: "Identificador requerido" });
   }
 
-  // NORMALIZACIÓN: Todo a minúsculas y sin espacios
   const cleanId = identifier.toLowerCase().trim();
 
   try {
@@ -34,7 +33,7 @@ exports.login = async (req, res) => {
           IndexName: "username-index",
           KeyConditionExpression: "username = :u",
           ExpressionAttributeValues: {
-            ":u": cleanId, // Ahora buscamos siempre en minúsculas
+            ":u": cleanId,
           },
         }),
       );
@@ -43,24 +42,29 @@ exports.login = async (req, res) => {
 
     if (!user) {
       return res.status(404).json({
-        message: "El usuario o correo no existe. Por favor regístrate.",
+        message: "El usuario o correo no existe.",
       });
     }
 
-    if (!user.password) {
-      return res
-        .status(200)
-        .json({ status: "NEED_REGISTER", email: user.email });
+    // Si el usuario existe pero no tiene contraseña, debe completar perfil
+    if (!user.password || user.password === "") {
+      return res.status(200).json({
+        status: "NEED_REGISTER",
+        email: user.email,
+      });
     }
 
+    // Si el usuario existe y tiene clave, pero no se envió en el body
     if (!password) {
       return res.status(200).json({ status: "NEED_PASSWORD" });
     }
 
+    // Verificación final de contraseña
     if (user.password !== password) {
       return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
+    // Éxito: Devolvemos el usuario (que incluye su 'company')
     res.status(200).json({ status: "OK", user });
   } catch (e) {
     console.error("Error en Login:", e);
@@ -80,14 +84,16 @@ exports.completeProfile = async (req, res) => {
       new UpdateCommand({
         TableName: "Users",
         Key: { email: email.toLowerCase().trim() },
+        // IMPORTANTE: Solo hacemos SET de los campos nuevos,
+        // preservando 'company' y cualquier otro dato existente.
         UpdateExpression:
-          "SET fullName = :fn, username = :un, phoneNumber = :pn, password = :pw",
+          "SET fullName = :fn, username = :un, phoneNumber = :pn, password = :pw, profileCompleted = :pc",
         ExpressionAttributeValues: {
-          ":fn": fullName,
-          // TRANSFORMACIÓN: Guardamos el username siempre en minúsculas
+          ":fn": fullName.trim(),
           ":un": username.toLowerCase().trim(),
-          ":pn": phoneNumber,
+          ":pn": phoneNumber.trim(),
           ":pw": password,
+          ":pc": true,
         },
       }),
     );
