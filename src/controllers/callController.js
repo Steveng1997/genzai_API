@@ -4,7 +4,7 @@ const axios = require("axios");
 
 exports.makeSmartCall = async (req, res) => {
   try {
-    const { businessId, company } = req.body; // Se requiere la compañía para filtrar
+    const { company } = req.body;
 
     if (!company) {
       return res
@@ -12,7 +12,6 @@ exports.makeSmartCall = async (req, res) => {
         .json({ message: "La compañía es requerida para filtrar clientes" });
     }
 
-    // 1. Obtener Configuración usando la compañía como ID de negocio
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: process.env.DYNAMODB_TABLE_AI || "AIConfigs",
@@ -20,13 +19,14 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    if (!config || !config.assistantId || !config.vapiPhoneNumberId) {
+    if (!config || !config.assistantId) {
       return res
         .status(404)
-        .json({ message: "Configuración incompleta en AIConfigs" });
+        .json({
+          message: "No se encontró configuración de IA para esta empresa",
+        });
     }
 
-    // 2. Obtener lista de Clientes FILTRADOS por compañía
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
         TableName: process.env.DYNAMODB_TABLE_LEADS || "Clients",
@@ -41,7 +41,6 @@ exports.makeSmartCall = async (req, res) => {
         .json({ message: "No hay clientes registrados para esta compañía" });
     }
 
-    // 3. Disparar llamadas
     const results = await Promise.all(
       clientes.map(async (cliente) => {
         let phone = cliente.phone.toString().replace(/\D/g, "");
@@ -58,10 +57,7 @@ exports.makeSmartCall = async (req, res) => {
               },
               assistantId: config.assistantId,
               phoneNumberId: config.vapiPhoneNumberId,
-              metadata: {
-                businessId: company,
-                company: company,
-              },
+              metadata: { company: company },
             },
             {
               headers: {
@@ -72,18 +68,17 @@ exports.makeSmartCall = async (req, res) => {
           );
           return { phone: formattedPhone, status: "success" };
         } catch (err) {
-          return { phone: formattedPhone, status: "error", error: err.message };
+          return { phone: formattedPhone, status: "error" };
         }
       }),
     );
 
     res.status(200).json({
       success: true,
-      message: `Proceso terminado para ${clientes.length} clientes`,
+      message: `Campaña procesada para ${clientes.length} clientes`,
       results,
     });
   } catch (e) {
-    console.error("❌ Error en makeSmartCall:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
