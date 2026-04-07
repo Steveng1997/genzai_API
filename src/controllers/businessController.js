@@ -29,9 +29,10 @@ exports.confirmPayment = async (req, res) => {
     const expirationDate = new Date();
     expirationDate.setDate(now.getDate() + 30);
 
+    // Guardar en la tabla de Pagos
     await dynamoDB.send(
       new PutCommand({
-        TableName: "Payments",
+        TableName: process.env.DYNAMODB_TABLE_PAYMENTS || "Payments",
         Item: {
           paymentId: paymentId,
           email: emailKey,
@@ -41,25 +42,27 @@ exports.confirmPayment = async (req, res) => {
           address: address,
           amount: Number(amount),
           planTitle: planDetails.title,
-          minutesPurchased: Number(planDetails.includedMinutes),
+          minutesPurchased: Number(planDetails.minutes), // Según image_5dcdaa.png
           paymentDate: now.toISOString(),
           expirationDate: expirationDate.toISOString(),
         },
       }),
     );
 
+    // Actualizar el perfil del Usuario con su compañía y expiración
     await dynamoDB.send(
       new UpdateCommand({
-        TableName: "Users",
+        TableName: process.env.DYNAMODB_TABLE_USERS || "Users",
         Key: { email: emailKey },
         UpdateExpression:
-          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v, currentPlan = :p, whatsappEnabled = :w",
+          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v, currentPlan = :p, whatsappEnabled = :w, company = :c",
         ExpressionAttributeValues: {
-          ":m": Number(planDetails.includedMinutes),
+          ":m": Number(planDetails.minutes),
           ":s": "active",
           ":v": expirationDate.toISOString(),
           ":p": planDetails.title,
           ":w": planDetails.whatsappApi !== "No incluido",
+          ":c": company, // Agregado para diferenciar por compañía
         },
       }),
     );

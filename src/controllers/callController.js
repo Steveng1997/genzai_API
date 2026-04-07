@@ -4,36 +4,44 @@ const axios = require("axios");
 
 exports.makeSmartCall = async (req, res) => {
   try {
-    const { businessId } = req.body;
+    const { businessId, company } = req.body; // Se requiere la compañía para filtrar
 
-    if (!businessId) {
-      return res.status(400).json({ message: "businessId es requerido" });
+    if (!company) {
+      return res
+        .status(400)
+        .json({ message: "La compañía es requerida para filtrar clientes" });
     }
 
-    // 1. Obtener Configuración (AssistantID y PhoneNumberID desde la DB)
+    // 1. Obtener Configuración usando la compañía como ID de negocio
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
-        TableName: "AIConfigs",
-        Key: { businessId: businessId },
+        TableName: process.env.DYNAMODB_TABLE_AI || "AIConfigs",
+        Key: { businessId: company },
       }),
     );
 
     if (!config || !config.assistantId || !config.vapiPhoneNumberId) {
-      return res.status(404).json({
-        message: "Configuración incompleta en la tabla AIConfigs",
-      });
+      return res
+        .status(404)
+        .json({ message: "Configuración incompleta en AIConfigs" });
     }
 
-    // 2. Obtener lista de Clientes
+    // 2. Obtener lista de Clientes FILTRADOS por compañía
     const { Items: clientes } = await dynamoDB.send(
-      new ScanCommand({ TableName: "Clients" }),
+      new ScanCommand({
+        TableName: process.env.DYNAMODB_TABLE_LEADS || "Clients",
+        FilterExpression: "company = :c",
+        ExpressionAttributeValues: { ":c": company },
+      }),
     );
 
     if (!clientes || clientes.length === 0) {
-      return res.status(404).json({ message: "No hay clientes para llamar" });
+      return res
+        .status(404)
+        .json({ message: "No hay clientes registrados para esta compañía" });
     }
 
-    // 3. Disparar llamadas masivas
+    // 3. Disparar llamadas
     const results = await Promise.all(
       clientes.map(async (cliente) => {
         let phone = cliente.phone.toString().replace(/\D/g, "");
@@ -51,8 +59,8 @@ exports.makeSmartCall = async (req, res) => {
               assistantId: config.assistantId,
               phoneNumberId: config.vapiPhoneNumberId,
               metadata: {
-                businessId: businessId,
-                businessName: config.businessName || "Empresa",
+                businessId: company,
+                company: company,
               },
             },
             {

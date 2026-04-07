@@ -5,11 +5,15 @@ const {
   DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
 
-// Obtener todos los clientes
+const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
+
 exports.getAllClients = async (req, res) => {
+  const { company } = req.query; // Obtener compañía de los parámetros de consulta
   try {
     const command = new ScanCommand({
-      TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
+      TableName: TABLE_CLIENTS,
+      FilterExpression: "company = :c",
+      ExpressionAttributeValues: { ":c": company },
     });
     const response = await docClient.send(command);
     res.status(200).json(response.Items || []);
@@ -18,21 +22,26 @@ exports.getAllClients = async (req, res) => {
   }
 };
 
-// Crear o Modificar (Upsert)
 exports.saveClient = async (req, res) => {
   try {
-    const { fullName, identification, phone, city, createdAt, call_active } =
-      req.body;
+    const {
+      fullName,
+      identification,
+      phone,
+      city,
+      createdAt,
+      call_active,
+      company,
+    } = req.body;
 
-    // Validación y Conversión Crítica a Número (Tipo N en Dynamo)
-    if (!phone)
-      return res.status(400).json({ error: "El teléfono es obligatorio" });
-    const finalPhone = Number(phone);
-    if (isNaN(finalPhone))
-      return res.status(400).json({ error: "Teléfono inválido" });
+    if (!phone || !company)
+      return res
+        .status(400)
+        .json({ error: "El teléfono y la compañía son obligatorios" });
 
     const clientItem = {
-      phone: finalPhone, // Key Primaria
+      phone: Number(phone),
+      company: company, // Campo crítico para diferenciación
       fullName: fullName || "N/A",
       identification: identification || "N/A",
       city: city || "N/A",
@@ -43,7 +52,7 @@ exports.saveClient = async (req, res) => {
 
     await docClient.send(
       new PutCommand({
-        TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
+        TableName: TABLE_CLIENTS,
         Item: clientItem,
       }),
     );
@@ -54,13 +63,12 @@ exports.saveClient = async (req, res) => {
   }
 };
 
-// Eliminar cliente
 exports.deleteClient = async (req, res) => {
   try {
     const { phone } = req.params;
     await docClient.send(
       new DeleteCommand({
-        TableName: process.env.DYNAMODB_TABLE_CLIENTS || "Clients",
+        TableName: TABLE_CLIENTS,
         Key: { phone: Number(phone) },
       }),
     );
