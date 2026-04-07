@@ -1,5 +1,6 @@
 const dynamoDB = require("../services/dynamo");
 const { PutCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+const { getPlanById } = require("./planController");
 
 exports.confirmPayment = async (req, res) => {
   const {
@@ -9,44 +10,56 @@ exports.confirmPayment = async (req, res) => {
     sellingProduct,
     address,
     paymentId,
-    minutes,
+    planId,
     amount,
   } = req.body;
+
   const emailKey = email.toLowerCase().trim();
-  const expirationDate = new Date();
-  expirationDate.setDate(expirationDate.getDate() + 30);
 
   try {
-    // 1. Registro en Pagos_Genzai (Key: pagold)
+    const planDetails = await getPlanById(planId);
+
+    if (!planDetails) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Plan definitions not found." });
+    }
+
+    const now = new Date();
+    const expirationDate = new Date();
+    expirationDate.setDate(now.getDate() + 30);
+
     await dynamoDB.send(
       new PutCommand({
         TableName: "Payments",
         Item: {
-          paymentId: req.body.paymentId,
+          paymentId: paymentId,
           email: emailKey,
-          company,
-          position,
-          sellingProduct,
-          address,
+          company: company,
+          position: position,
+          sellingProduct: sellingProduct,
+          address: address,
           amount: Number(amount),
-          minutesPurchased: Number(minutes),
-          paymentDate: new Date().toISOString(),
+          planTitle: planDetails.title,
+          minutesPurchased: Number(planDetails.includedMinutes),
+          paymentDate: now.toISOString(),
           expirationDate: expirationDate.toISOString(),
         },
       }),
     );
 
-    // 2. Actualización de GenzaiUsers (Columnas en Inglés)
     await dynamoDB.send(
       new UpdateCommand({
         TableName: "Users",
         Key: { email: emailKey },
         UpdateExpression:
-          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v",
+          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v, currentPlan = :p, whatsappEnabled = :w",
         ExpressionAttributeValues: {
-          ":m": Number(minutes),
+          ":m": Number(planDetails.includedMinutes),
           ":s": "active",
           ":v": expirationDate.toISOString(),
+          ":p": planDetails.title,
+          ":w": planDetails.whatsappApi !== "No incluido",
         },
       }),
     );
