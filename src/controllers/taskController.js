@@ -24,39 +24,22 @@ exports.getTasks = async (req, res) => {
   }
 };
 
-exports.completeTask = async (req, res) => {
-  const { taskId, isCompleted } = req.body;
-  try {
-    await dynamoDB.send(
-      new UpdateCommand({
-        TableName: TABLE_TASKS,
-        Key: { taskId: taskId },
-        UpdateExpression: "set isCompleted = :val",
-        ExpressionAttributeValues: { ":val": isCompleted },
-      }),
-    );
-    res.status(200).json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-};
-
 exports.handleRileyTool = async (req, res) => {
   try {
     const payload = req.body.message || req.body;
     const toolCall = payload.toolCalls?.[0] || payload.toolCallList?.[0];
-    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
+    if (!toolCall) return res.status(400).json({ error: "No tool call" });
 
     const { titulo, detalle, company } = toolCall.function.arguments;
 
     const newTask = {
-      taskId: `TASK-${Date.now()}`,
-      company: company,
+      taskId: `T-${Date.now()}`,
+      company,
       title: titulo,
-      description: detalle || "Sin detalles",
+      description: detalle || "Generada por Riley",
       isCompleted: false,
       createdAt: new Date().toISOString(),
-      source: "Riley Assistant",
+      source: "Riley AI",
     };
 
     await dynamoDB.send(
@@ -65,52 +48,56 @@ exports.handleRileyTool = async (req, res) => {
     return res
       .status(200)
       .json({
-        results: [{ toolCallId: toolCall.id, result: "Tarea guardada." }],
+        results: [{ toolCallId: toolCall.id, result: "Tarea creada." }],
       });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message });
   }
 };
 
 exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
-  if (payload.type !== "end-of-call-report")
-    return res.status(200).json({ message: "Ignorado" });
+  if (payload.type !== "end-of-call-report") return res.status(200).send();
+
+  console.log(`[Webhook] Reporte de llamada recibido para ${payload.call?.id}`);
 
   try {
-    const { call, summary, transcript } = payload;
-    const company = call?.metadata?.company || "unknown";
+    const company = payload.call?.metadata?.company || "unknown";
+    const summary = payload.summary || "Llamada finalizada sin resumen";
 
-    const historyItem = {
-      id: String(call?.id || Date.now()),
-      company: company,
-      phone: call?.customer?.number || "N/A",
-      duration: call?.durationSeconds || 0,
-      timestamp: new Date().toISOString(),
-      summary: summary || "Sin resumen",
-    };
-
+    // 1. Guardar en Historial
     await dynamoDB.send(
-      new PutCommand({ TableName: TABLE_HISTORY, Item: historyItem }),
+      new PutCommand({
+        TableName: TABLE_HISTORY,
+        Item: {
+          id: payload.call?.id || String(Date.now()),
+          company,
+          phone: payload.call?.customer?.number,
+          duration: payload.call?.durationSeconds,
+          timestamp: new Date().toISOString(),
+        },
+      }),
     );
 
-    if (summary) {
-      const callTask = {
-        taskId: `CALL-${Date.now()}`,
-        company: company,
-        title: `Llamada con ${call?.customer?.name || "Cliente"}`,
-        description: summary,
-        isCompleted: true,
-        createdAt: new Date().toISOString(),
-        source: "Vapi Webhook",
-      };
-      await dynamoDB.send(
-        new PutCommand({ TableName: TABLE_TASKS, Item: callTask }),
-      );
-    }
+    // 2. Crear Tarea de seguimiento
+    await dynamoDB.send(
+      new PutCommand({
+        TableName: TABLE_TASKS,
+        Item: {
+          taskId: `CALL-${Date.now()}`,
+          company,
+          title: `Resumen: ${payload.call?.customer?.name || "Cliente"}`,
+          description: summary,
+          isCompleted: true,
+          createdAt: new Date().toISOString(),
+          source: "Vapi Report",
+        },
+      }),
+    );
 
-    return res.status(200).json({ success: true });
+    res.status(200).json({ success: true });
   } catch (error) {
-    return res.status(200).json({ error: error.message });
+    console.error("[Webhook Error]", error);
+    res.status(200).json({ error: error.message });
   }
 };

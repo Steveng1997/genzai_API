@@ -4,16 +4,12 @@ const axios = require("axios");
 
 exports.makeSmartCall = async (req, res) => {
   const { company } = req.body;
-  console.log(`🚀 Iniciando campaña para la empresa: ${company}`);
+  console.log(`\n--- INICIO DE CAMPAÑA: ${company} ---`);
 
   try {
-    if (!company) {
-      return res
-        .status(400)
-        .json({ message: "ID de empresa no proporcionado" });
-    }
+    if (!company)
+      return res.status(400).json({ message: "Compañía requerida" });
 
-    // 1. Obtener configuración de IA
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: "AIConfigs",
@@ -22,13 +18,14 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config) {
-      console.error(`❌ Error: No hay configuración de IA para ${company}`);
-      return res
-        .status(404)
-        .json({ message: "No hay IA configurada para " + company });
+      console.log(`❌ Configuración no encontrada para ${company}`);
+      return res.status(404).json({ message: "No hay IA configurada" });
     }
 
-    // 2. Obtener Clientes filtrados por compañía
+    console.log(
+      `✅ Configuración cargada. AssistantId: ${config.assistantId}, PhoneId: ${config.vapiPhoneNumberId}`,
+    );
+
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
         TableName: "Clients",
@@ -38,54 +35,50 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!clientes || clientes.length === 0) {
-      console.warn(
-        `⚠️ Advertencia: No hay clientes registrados para ${company}`,
-      );
-      return res
-        .status(404)
-        .json({ message: "No hay clientes registrados para " + company });
+      console.log(`⚠️ No hay clientes para la empresa ${company}`);
+      return res.status(404).json({ message: "No hay clientes" });
     }
 
-    // Usar el número de la DB o el de respaldo (Asegúrate que este ID sea el correcto en tu Vapi Dashboard)
-    const activePhoneNumberId =
-      config.vapiPhoneNumberId || "59d1cef7-80b8-4dfa-9a14-1394df3bc97a";
+    console.log(`📞 Intentando llamar a ${clientes.length} clientes...`);
 
-    // 3. Ejecutar llamadas con Logs de respuesta de Vapi
     const calls = clientes.map(async (cliente) => {
       try {
+        console.log(`>> Llamando a ${cliente.fullName} (${cliente.phone})...`);
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
             customer: { number: cliente.phone, name: cliente.fullName },
             assistantId: config.assistantId,
-            phoneNumberId: activePhoneNumberId,
+            phoneNumberId:
+              config.vapiPhoneNumberId ||
+              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             metadata: { company: company },
           },
-          {
-            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
-          },
+          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
         console.log(
-          `✅ Llamada exitosa a ${cliente.fullName} (${cliente.phone}). ID: ${response.data.id}`,
+          `✅ Éxito cliente ${cliente.fullName}: ID ${response.data.id}`,
         );
         return response.data;
-      } catch (error) {
+      } catch (err) {
         console.error(
-          `❌ Error llamando a ${cliente.fullName}:`,
-          error.response?.data || error.message,
+          `❌ Fallo cliente ${cliente.fullName}:`,
+          err.response?.data || err.message,
         );
-        throw error; // Lanza para que Promise.all sepa que algo falló
+        return { error: true, client: cliente.fullName };
       }
     });
 
-    await Promise.all(calls);
+    const results = await Promise.all(calls);
+    console.log(`--- FIN DE PROCESO PARA ${company} ---\n`);
 
     res.status(200).json({
       success: true,
-      message: `Campaña iniciada para ${clientes.length} clientes de ${company}`,
+      message: `Proceso terminado para ${clientes.length} clientes en ${company}`,
+      results,
     });
   } catch (e) {
-    console.error("🔥 Error crítico en makeSmartCall:", e.message);
+    console.error("🔥 Error crítico:", e);
     res.status(500).json({ error: e.message });
   }
 };

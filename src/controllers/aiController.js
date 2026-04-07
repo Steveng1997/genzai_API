@@ -89,10 +89,12 @@ exports.setupAssistant = async (req, res) => {
       new PutCommand({ TableName: TABLE_AI_CONFIGS, Item: aiConfigItem }),
     );
 
-    res.status(200).json({
-      success: true,
-      message: "Entrenamiento completado para " + company,
-    });
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Entrenamiento completado para " + company,
+      });
   } catch (e) {
     console.error("[Setup Error]", e);
     res.status(500).json({ message: "Error técnico", error: e.message });
