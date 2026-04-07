@@ -8,7 +8,7 @@ const {
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
 
 exports.getAllClients = async (req, res) => {
-  const { company } = req.query; // Obtener compañía de los parámetros de consulta
+  const { company } = req.query;
   try {
     const command = new ScanCommand({
       TableName: TABLE_CLIENTS,
@@ -34,14 +34,15 @@ exports.saveClient = async (req, res) => {
       company,
     } = req.body;
 
-    if (!phone || !company)
+    if (!phone || !company) {
       return res
         .status(400)
         .json({ error: "El teléfono y la compañía son obligatorios" });
+    }
 
     const clientItem = {
       phone: Number(phone),
-      company: company, // Campo crítico para diferenciación
+      company: company,
       fullName: fullName || "N/A",
       identification: identification || "N/A",
       city: city || "N/A",
