@@ -55,16 +55,30 @@ exports.completeTask = async (req, res) => {
 
 exports.handleRileyTool = async (req, res) => {
   try {
+    console.log("📥 Recibiendo solicitud en handleRileyTool");
     const payload = req.body.message || req.body;
-    const toolCall = payload.toolCalls?.[0] || payload.toolCallList?.[0];
-    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
+    const toolCall =
+      payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
 
-    const { titulo, detalle, company } = toolCall.function.arguments;
+    if (!toolCall) {
+      console.error("❌ Error: No se encontró toolCall en el payload");
+      return res.status(400).json({ error: "No tool call data" });
+    }
+
+    const args =
+      typeof toolCall.function.arguments === "string"
+        ? JSON.parse(toolCall.function.arguments)
+        : toolCall.function.arguments;
+
+    const { titulo, detalle, company } = args;
+    console.log(
+      `📝 Intentando guardar tarea de Riley: ${titulo} para ${company}`,
+    );
 
     const newTask = {
       taskId: `T-${Date.now()}`,
       company: company || "genzai",
-      title: titulo || "Tarea de Riley",
+      title: titulo || "Nueva Tarea",
       description: detalle || "Sin detalles",
       isCompleted: false,
       createdAt: new Date().toISOString(),
@@ -74,12 +88,15 @@ exports.handleRileyTool = async (req, res) => {
     await dynamoDB.send(
       new PutCommand({ TableName: TABLE_TASKS, Item: newTask }),
     );
+    console.log("✅ Tarea de Riley guardada exitosamente en DynamoDB");
+
     return res.status(200).json({
       results: [
         { toolCallId: toolCall.id, result: "Tarea guardada correctamente." },
       ],
     });
   } catch (e) {
+    console.error("❌ Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -90,16 +107,15 @@ exports.handleVapiWebhook = async (req, res) => {
     return res.status(200).json({ message: "Ignorado" });
 
   try {
+    console.log("📥 Recibiendo Webhook de Vapi (end-of-call-report)");
     const { call, summary } = payload;
     const company = call?.metadata?.company || "genzai";
 
-    // Duración formateada (ej. 2:06)
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const durationFormatted = formatDuration(rawDuration);
 
-    // Costo redondeado a 2 decimales (ej. 0.1784 -> 0.18)
     const rawCost = Number(call?.cost || payload.cost || 0);
     const callCostRounded = Math.round((rawCost + Number.EPSILON) * 100) / 100;
 
@@ -111,6 +127,9 @@ exports.handleVapiWebhook = async (req, res) => {
       ? summary || "Llamada finalizada"
       : "Llamada no contestada";
 
+    console.log(
+      `📊 Guardando historial: Duración ${durationFormatted}, Costo ${callCostRounded}`,
+    );
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -119,7 +138,7 @@ exports.handleVapiWebhook = async (req, res) => {
           company,
           phone,
           duration: durationFormatted,
-          cost: callCostRounded, // Ahora se guarda como 0.18
+          cost: callCostRounded,
           timestamp: new Date().toISOString(),
           summary: finalSummary,
           answered: wasAnswered,
@@ -128,24 +147,32 @@ exports.handleVapiWebhook = async (req, res) => {
     );
 
     if (wasAnswered && summary) {
+      console.log(
+        `📝 Intentando guardar tarea automática desde Webhook para ${name}`,
+      );
+      const newTask = {
+        taskId: `CALL-${Date.now()}`,
+        company,
+        title: `📞 Llamada: ${name}`,
+        description: summary,
+        isCompleted: true,
+        createdAt: new Date().toISOString(),
+        source: "Vapi Webhook",
+      };
+
       await dynamoDB.send(
-        new PutCommand({
-          TableName: TABLE_TASKS,
-          Item: {
-            taskId: `CALL-${Date.now()}`,
-            company,
-            title: `📞 Llamada: ${name}`,
-            description: summary,
-            isCompleted: true,
-            createdAt: new Date().toISOString(),
-            source: "Vapi Webhook",
-          },
-        }),
+        new PutCommand({ TableName: TABLE_TASKS, Item: newTask }),
+      );
+      console.log("✅ Tarea de Webhook guardada exitosamente");
+    } else {
+      console.log(
+        "ℹ️ No se creó tarea: La llamada no fue contestada o no hay resumen.",
       );
     }
 
     return res.status(200).json({ success: true });
   } catch (error) {
+    console.error("❌ Error en handleVapiWebhook:", error.message);
     return res.status(500).json({ error: error.message });
   }
 };
