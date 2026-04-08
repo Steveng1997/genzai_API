@@ -56,21 +56,16 @@ exports.completeTask = async (req, res) => {
 exports.handleRileyTool = async (req, res) => {
   try {
     const payload = req.body.message || req.body;
-    // Vapi envía los argumentos dentro de toolCalls o toolCallList según la versión
     const toolCall = payload.toolCalls?.[0] || payload.toolCallList?.[0];
-
-    if (!toolCall) {
-      console.log("⚠️ No se detectó toolCall en el body");
-      return res.status(400).json({ error: "No tool call data" });
-    }
+    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
 
     const { titulo, detalle, company } = toolCall.function.arguments;
 
     const newTask = {
       taskId: `T-${Date.now()}`,
       company: company || "genzai",
-      title: titulo || "Nueva Tarea de Riley",
-      description: detalle || "Sin detalles adicionales",
+      title: titulo || "Tarea de Riley",
+      description: detalle || "Sin detalles",
       isCompleted: false,
       createdAt: new Date().toISOString(),
       source: "Riley Assistant",
@@ -79,18 +74,12 @@ exports.handleRileyTool = async (req, res) => {
     await dynamoDB.send(
       new PutCommand({ TableName: TABLE_TASKS, Item: newTask }),
     );
-
-    // Vapi requiere esta estructura exacta de respuesta para confirmar el éxito de la herramienta
     return res.status(200).json({
       results: [
-        {
-          toolCallId: toolCall.id,
-          result: "Tarea agendada y guardada en el sistema correctamente.",
-        },
+        { toolCallId: toolCall.id, result: "Tarea guardada correctamente." },
       ],
     });
   } catch (e) {
-    console.error("❌ Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -104,12 +93,15 @@ exports.handleVapiWebhook = async (req, res) => {
     const { call, summary } = payload;
     const company = call?.metadata?.company || "genzai";
 
-    // Captura de duración y costo de las capturas
+    // Duración formateada (ej. 2:06)
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const durationFormatted = formatDuration(rawDuration);
-    const callCost = Number(call?.cost || payload.cost || 0);
+
+    // Costo redondeado a 2 decimales (ej. 0.1784 -> 0.18)
+    const rawCost = Number(call?.cost || payload.cost || 0);
+    const callCostRounded = Math.round((rawCost + Number.EPSILON) * 100) / 100;
 
     const phone = call?.customer?.number || "N/A";
     const name = call?.customer?.name || "Cliente";
@@ -119,7 +111,6 @@ exports.handleVapiWebhook = async (req, res) => {
       ? summary || "Llamada finalizada"
       : "Llamada no contestada";
 
-    // Guardar en ConsumptionHistory
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -127,8 +118,8 @@ exports.handleVapiWebhook = async (req, res) => {
           id: String(call?.id || Date.now()),
           company,
           phone,
-          duration: durationFormatted, // Ahora guarda "2:06"
-          cost: parseFloat(callCost.toFixed(4)), // Guarda el costo exacto
+          duration: durationFormatted,
+          cost: callCostRounded, // Ahora se guarda como 0.18
           timestamp: new Date().toISOString(),
           summary: finalSummary,
           answered: wasAnswered,
@@ -136,7 +127,6 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
-    // Solo crear tarea si hubo conversación real
     if (wasAnswered && summary) {
       await dynamoDB.send(
         new PutCommand({
@@ -156,7 +146,6 @@ exports.handleVapiWebhook = async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("❌ Error en handleVapiWebhook:", error.message);
     return res.status(500).json({ error: error.message });
   }
 };
