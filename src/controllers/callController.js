@@ -60,6 +60,7 @@ exports.makeSmartCall = async (req, res) => {
 
         console.log(`📞 Marcando -> ${cliente.fullName} (${formattedPhone})`);
 
+        // Estructura optimizada para Vapi
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
@@ -69,10 +70,14 @@ exports.makeSmartCall = async (req, res) => {
               model: {
                 provider: "openai",
                 model: "gpt-4o",
-                knowledgeBase: {
-                  provider: "openai",
-                  fileIds: config.openaiFileIds || [],
-                },
+                // Si config.openaiFileIds tiene datos, se pasan aquí.
+                // Si el error persiste, Vapi prefiere que los archivos ya estén en el AssistantId configurado.
+                messages: [
+                  {
+                    role: "system",
+                    content: `Estás hablando con ${cliente.fullName}.`,
+                  },
+                ],
               },
             },
             phoneNumberId:
