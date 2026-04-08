@@ -76,7 +76,7 @@ exports.handleRileyTool = async (req, res) => {
     );
 
     const newTask = {
-      taskId: `T-${Date.now()}`,
+      taskId: Date.now(),
       company: company || "genzai",
       title: titulo || "Nueva Tarea",
       description: detalle || "Sin detalles",
