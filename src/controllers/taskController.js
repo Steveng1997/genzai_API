@@ -8,6 +8,7 @@ const dynamoDB = require("../services/dynamo");
 const TABLE_TASKS = process.env.DYNAMODB_TABLE_TASK || "Tasks";
 const TABLE_HISTORY =
   process.env.DYNAMODB_TABLE_HISTORY || "ConsumptionHistory";
+const TABLE_USERS = "Users";
 
 const formatDuration = (seconds) => {
   if (!seconds || seconds <= 0) return "0:00";
@@ -35,7 +36,6 @@ exports.getTasks = async (req, res) => {
 
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
-  console.log(`[Task] Actualizando taskId: ${taskId} a estado: ${isCompleted}`);
   try {
     await dynamoDB.send(
       new UpdateCommand({
@@ -45,7 +45,6 @@ exports.completeTask = async (req, res) => {
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
     );
-    console.log(`✅ Task ${taskId} actualizado.`);
     res.status(200).json({ success: true });
   } catch (e) {
     console.error(`❌ Error en completeTask ${taskId}:`, e.message);
@@ -55,23 +54,16 @@ exports.completeTask = async (req, res) => {
 
 exports.handleRileyTool = async (req, res) => {
   try {
-    console.log("📥 Recibiendo llamada de herramienta (Riley Tool)");
     const payload = req.body.message || req.body;
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
-
-    if (!toolCall) {
-      console.warn("⚠️ RileyTool: No se encontró toolCall en el payload");
-      return res.status(400).json({ error: "No tool call data" });
-    }
+    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
 
     const args =
       typeof toolCall.function.arguments === "string"
         ? JSON.parse(toolCall.function.arguments)
         : toolCall.function.arguments;
     const { titulo, detalle, company } = args;
-
-    console.log(`📝 Guardando tarea de Riley: ${titulo} para ${company}`);
 
     await dynamoDB.send(
       new PutCommand({
@@ -87,12 +79,10 @@ exports.handleRileyTool = async (req, res) => {
         },
       }),
     );
-    console.log("✅ Tarea de Riley guardada exitosamente.");
     return res.status(200).json({
       results: [{ toolCallId: toolCall.id, result: "Tarea guardada" }],
     });
   } catch (e) {
-    console.error("🔥 Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -102,22 +92,20 @@ exports.handleVapiWebhook = async (req, res) => {
   if (payload.type !== "end-of-call-report")
     return res.status(200).json({ message: "Ignorado" });
 
-  console.log(`📥 Webhook Vapi (End-of-Call): CallId ${payload.call?.id}`);
-
   try {
     const { call, summary } = payload;
     const company = call?.metadata?.company || "genzai";
+    const userEmail = call?.metadata?.email; // IMPORTANTE: Debes enviar el email en la metadata desde Vapi
+
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
 
-    console.log(
-      `📊 Datos de llamada: Duración ${rawDuration}s, Costo ${rawCost}, Respondida: ${wasAnswered}`,
-    );
+    // Convertimos segundos a minutos decimales para la resta (ej: 90s -> 1.5 min)
+    const minutesToSubtract = rawDuration / 60;
 
-    console.log(`[DB] Guardando historial en ${TABLE_HISTORY}`);
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -136,10 +124,29 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
-    if (wasAnswered && summary) {
+    // LÓGICA DE RESTA DE MINUTOS
+    if (wasAnswered && userEmail) {
       console.log(
-        `[DB] Guardando tarea automática por llamada contestada para ${company}`,
+        `📉 Restando ${minutesToSubtract.toFixed(2)} minutos a ${userEmail}`,
       );
+      try {
+        await dynamoDB.send(
+          new UpdateCommand({
+            TableName: TABLE_USERS,
+            Key: { email: userEmail.toLowerCase().trim() },
+            UpdateExpression: "SET availableMinutes = availableMinutes - :m",
+            ExpressionAttributeValues: {
+              ":m": minutesToSubtract,
+            },
+          }),
+        );
+        console.log("✅ Minutos descontados correctamente.");
+      } catch (dbErr) {
+        console.error("❌ Error al descontar minutos:", dbErr.message);
+      }
+    }
+
+    if (wasAnswered && summary) {
       await dynamoDB.send(
         new PutCommand({
           TableName: TABLE_TASKS,
@@ -154,7 +161,6 @@ exports.handleVapiWebhook = async (req, res) => {
           },
         }),
       );
-      console.log("✅ Tarea automática guardada.");
     }
 
     return res.status(200).json({ success: true });
