@@ -51,6 +51,17 @@ exports.makeSmartCall = async (req, res) => {
         .json({ message: "No hay clientes activos para llamar" });
     }
 
+    const ahora = new Date();
+    const horaColombia = new Date(
+      ahora.toLocaleString("en-US", { timeZone: "America/Bogota" }),
+    ).getHours();
+
+    let saludoTemporal = "Buenos días";
+    if (horaColombia >= 12 && horaColombia < 18)
+      saludoTemporal = "Buenas tardes";
+    else if (horaColombia >= 18 || horaColombia < 5)
+      saludoTemporal = "Buenas noches";
+
     const calls = clientesParaLlamar.map(async (cliente) => {
       try {
         let rawPhone = cliente.phone.toString().replace(/\s+/g, "");
@@ -60,7 +71,6 @@ exports.makeSmartCall = async (req, res) => {
 
         console.log(`📞 Marcando -> ${cliente.fullName} (${formattedPhone})`);
 
-        // Estructura optimizada para Vapi
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
@@ -70,12 +80,20 @@ exports.makeSmartCall = async (req, res) => {
               model: {
                 provider: "openai",
                 model: "gpt-4o",
-                // Si config.openaiFileIds tiene datos, se pasan aquí.
-                // Si el error persiste, Vapi prefiere que los archivos ya estén en el AssistantId configurado.
                 messages: [
                   {
                     role: "system",
-                    content: `Estás hablando con ${cliente.fullName}.`,
+                    content: `Eres Riley, un asesor experto de la empresa ${company}. Tu interlocutor es ${cliente.fullName}.
+                    
+                    SALUDO INICIAL: Debe ser exactamente: "${saludoTemporal} ${cliente.fullName}, ¿cómo te encuentras el día de hoy?".
+                    
+                    REGLAS DE PRODUCTOS:
+                    1. Solo ofrece los vehículos que aparecen en los archivos PDF de tu base de conocimientos.
+                    2. Si el cliente pide un vehículo que NO está en los documentos (como un Mazda 3 o cualquier otro), responde: "En este momento no tengo ese modelo en inventario, pero puedo agendarte una cita con un asesor para ayudarte a conseguirlo".
+                    3. Si acepta la cita o quiere hablar con alguien humano, usa la herramienta 'handleRileyTool' para registrar la tarea con estos datos:
+                       - titulo: Cita Interés Vehículo - ${cliente.fullName}
+                       - detalle: Interés en vehículo no disponible en PDF o solicita asesoría.
+                       - company: ${company}`,
                   },
                 ],
               },
