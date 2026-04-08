@@ -13,13 +13,10 @@ exports.makeSmartCall = async (req, res) => {
 
   try {
     if (!company) {
-      console.error("❌ Error: Compañía no proporcionada en el body");
+      console.error("❌ Error: Compañía no proporcionada");
       return res.status(400).json({ message: "Compañía requerida" });
     }
 
-    console.log(
-      `[DB] Buscando configuración en ${TABLE_CONFIGS} para: ${company}`,
-    );
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -31,9 +28,7 @@ exports.makeSmartCall = async (req, res) => {
       console.error(`❌ Error: No se encontró configuración para ${company}`);
       return res.status(404).json({ message: "No hay IA configurada" });
     }
-    console.log(`✅ Configuración cargada. AssistantId: ${config.assistantId}`);
 
-    console.log(`[DB] Escaneando clientes para la empresa: ${company}`);
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CLIENTS,
@@ -42,18 +37,15 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    console.log(`📊 Clientes totales encontrados: ${clientes?.length || 0}`);
-
     const clientesParaLlamar = (clientes || []).filter(
       (c) => c.call_active === true,
     );
 
     console.log(
-      `🎯 Clientes con call_active=true: ${clientesParaLlamar.length}`,
+      `📊 Total: ${clientes?.length || 0} | Activos: ${clientesParaLlamar.length}`,
     );
 
     if (clientesParaLlamar.length === 0) {
-      console.warn("⚠️ No se procede: No hay clientes con estado activo.");
       return res
         .status(404)
         .json({ message: "No hay clientes activos para llamar" });
@@ -66,9 +58,7 @@ exports.makeSmartCall = async (req, res) => {
           ? rawPhone
           : `+57${rawPhone}`;
 
-        console.log(
-          `📞 Intentando POST Vapi -> ${cliente.fullName} (${formattedPhone})`,
-        );
+        console.log(`📞 Marcando -> ${cliente.fullName} (${formattedPhone})`);
 
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
@@ -77,6 +67,8 @@ exports.makeSmartCall = async (req, res) => {
             assistantId: config.assistantId,
             assistantOverrides: {
               model: {
+                provider: "openai",
+                model: "gpt-4o",
                 knowledgeBase: {
                   provider: "openai",
                   fileIds: config.openaiFileIds || [],
@@ -92,27 +84,23 @@ exports.makeSmartCall = async (req, res) => {
         );
 
         console.log(
-          `✅ Vapi aceptó la llamada para ${cliente.fullName}. CallId: ${response.data.id}`,
+          `✅ Llamada aceptada para ${cliente.fullName}. ID: ${response.data.id}`,
         );
         return response.data;
       } catch (err) {
         console.error(
-          `❌ Error en POST Vapi para ${cliente.fullName}:`,
+          `❌ Error Vapi (${cliente.fullName}):`,
           err.response?.data || err.message,
         );
-        return {
-          error: true,
-          client: cliente.fullName,
-          details: err.response?.data,
-        };
+        return { error: true, client: cliente.fullName };
       }
     });
 
     const results = await Promise.all(calls);
-    console.log(`--- FIN DE PROCESO DE LLAMADA PARA ${company} ---\n`);
+    console.log(`--- FIN PROCESO: ${company} ---\n`);
     res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error("🔥 ERROR CRÍTICO en makeSmartCall:", e);
+    console.error("🔥 ERROR CRÍTICO:", e);
     res.status(500).json({ error: e.message });
   }
 };
