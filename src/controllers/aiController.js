@@ -13,13 +13,8 @@ exports.setupAssistant = async (req, res) => {
     const email = (req.body.email || "").toLowerCase().trim();
     const company = (req.body.company || "").trim();
 
-    if (!email || !company) {
-      return res
-        .status(400)
-        .json({ message: "Identificación de empresa y usuario requerida." });
-    }
-
-    console.log(`[Setup] Buscando suscripción para: ${email} en ${company}`);
+    if (!email || !company)
+      return res.status(400).json({ message: "Empresa y usuario requeridos." });
 
     const paymentsResponse = await dynamoDB.send(
       new ScanCommand({
@@ -73,20 +68,21 @@ exports.setupAssistant = async (req, res) => {
       },
     });
 
-    const aiConfigItem = {
-      businessId: company,
-      ownerEmail: email,
-      openaiAssistantId: assistant.id,
-      assistantId: "4c266662-68db-4046-a13f-8c021c84919c",
-      vapiPhoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-      businessName: company,
-      product: productDescription,
-      updatedAt: new Date().toISOString(),
-    };
-
-    console.log(`[Setup] Guardando configuración en AIConfigs para ${company}`);
     await dynamoDB.send(
-      new PutCommand({ TableName: TABLE_AI_CONFIGS, Item: aiConfigItem }),
+      new PutCommand({
+        TableName: TABLE_AI_CONFIGS,
+        Item: {
+          businessId: company,
+          ownerEmail: email,
+          openaiAssistantId: assistant.id,
+          openaiFileIds: fileIds,
+          assistantId: "4c266662-68db-4046-a13f-8c021c84919c",
+          vapiPhoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
+          businessName: company,
+          product: productDescription,
+          updatedAt: new Date().toISOString(),
+        },
+      }),
     );
 
     res
@@ -96,7 +92,6 @@ exports.setupAssistant = async (req, res) => {
         message: "Entrenamiento completado para " + company,
       });
   } catch (e) {
-    console.error("[Setup Error]", e);
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {
     files.forEach((f) => {

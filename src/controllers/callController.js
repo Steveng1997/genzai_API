@@ -2,90 +2,75 @@ const { GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 const axios = require("axios");
 
+const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI || "AIConfigs";
+const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
+
 exports.makeSmartCall = async (req, res) => {
   const { company } = req.body;
-  console.log(`\n--- INICIO DE CAMPAÑA: ${company} ---`);
-
   try {
-    if (!company) {
+    if (!company)
       return res.status(400).json({ message: "Compañía requerida" });
-    }
 
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
-        TableName: "AIConfigs",
+        TableName: TABLE_CONFIGS,
         Key: { businessId: company },
       }),
     );
 
-    if (!config) {
-      console.log(`❌ Configuración no encontrada para ${company}`);
+    if (!config)
       return res.status(404).json({ message: "No hay IA configurada" });
-    }
 
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
-        TableName: "Clients",
+        TableName: TABLE_CLIENTS,
         FilterExpression: "company = :c",
         ExpressionAttributeValues: { ":c": company },
       }),
     );
 
-    if (!clientes || clientes.length === 0) {
-      console.log(`⚠️ No hay clientes para la empresa ${company}`);
-      return res.status(404).json({ message: "No hay clientes" });
-    }
+    const clientesParaLlamar = (clientes || []).filter(
+      (c) => c.call_active === true,
+    );
 
-    const calls = clientes.map(async (cliente) => {
+    if (clientesParaLlamar.length === 0)
+      return res.status(404).json({ message: "No hay clientes activos" });
+
+    const calls = clientesParaLlamar.map(async (cliente) => {
       try {
         let rawPhone = cliente.phone.toString().replace(/\s+/g, "");
         let formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
 
-        console.log(`>> Intentando: ${cliente.fullName} -> ${formattedPhone}`);
-
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
-            customer: {
-              number: formattedPhone,
-              name: cliente.fullName,
-            },
+            customer: { number: formattedPhone, name: cliente.fullName },
             assistantId: config.assistantId,
+            assistantOverrides: {
+              model: {
+                knowledgeBase: {
+                  provider: "openai",
+                  fileIds: config.openaiFileIds || [],
+                },
+              },
+            },
             phoneNumberId:
-              config.vapiPhoneNumberId ||
-              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-            metadata: { company: company },
+              config.vapiPhoneNumberId || process.env.VAPI_PHONE_NUMBER_ID,
+            metadata: { company },
           },
-          {
-            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
-          },
-        );
-
-        console.log(
-          `✅ Éxito cliente ${cliente.fullName}: ID ${response.data.id}`,
+          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
         return response.data;
       } catch (err) {
-        console.error(
-          `❌ Fallo cliente ${cliente.fullName}:`,
-          err.response?.data || err.message,
-        );
         return { error: true, client: cliente.fullName };
       }
     });
 
     const results = await Promise.all(calls);
-    console.log(`--- FIN DE PROCESO PARA ${company} ---\n`);
-
-    res.status(200).json({
-      success: true,
-      message: `Proceso terminado para ${clientes.length} clientes en ${company}`,
-      results,
-    });
+    res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error("🔥 Error crítico:", e);
     res.status(500).json({ error: e.message });
   }
 };
