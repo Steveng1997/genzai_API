@@ -83,11 +83,15 @@ exports.handleVapiWebhook = async (req, res) => {
   try {
     const { call, summary } = payload;
     const company = call?.metadata?.company || "unknown";
-    const duration = call?.durationSeconds || 0;
+
+    const duration = Number(
+      call?.durationSeconds || payload.durationSeconds || 0,
+    );
     const phone = call?.customer?.number || "N/A";
     const name = call?.customer?.name || "Cliente";
 
-    const wasAnswered = duration > 0;
+    const wasAnswered = duration > 0 || (summary && summary.length > 5);
+
     const finalSummary = wasAnswered
       ? summary || "Llamada finalizada"
       : "Llamada no contestada";
