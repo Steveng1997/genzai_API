@@ -16,7 +16,6 @@ exports.login = async (req, res) => {
   try {
     let user = null;
 
-    // 1. Buscar por Email (Primary Key)
     const byEmail = await dynamoDB.send(
       new GetCommand({
         TableName: "Users",
@@ -25,7 +24,6 @@ exports.login = async (req, res) => {
     );
     user = byEmail.Item;
 
-    // 2. Buscar por Username (GSI) si no se encontró por email
     if (!user) {
       const byUser = await dynamoDB.send(
         new QueryCommand({
@@ -46,7 +44,6 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Si el usuario existe pero no tiene contraseña, debe completar perfil
     if (!user.password || user.password === "") {
       return res.status(200).json({
         status: "NEED_REGISTER",
@@ -54,17 +51,14 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Si el usuario existe y tiene clave, pero no se envió en el body
     if (!password) {
       return res.status(200).json({ status: "NEED_PASSWORD" });
     }
 
-    // Verificación final de contraseña
     if (user.password !== password) {
       return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
-    // Éxito: Devolvemos el usuario (que incluye su 'company')
     res.status(200).json({ status: "OK", user });
   } catch (e) {
     console.error("Error en Login:", e);
@@ -84,8 +78,6 @@ exports.completeProfile = async (req, res) => {
       new UpdateCommand({
         TableName: "Users",
         Key: { email: email.toLowerCase().trim() },
-        // IMPORTANTE: Solo hacemos SET de los campos nuevos,
-        // preservando 'company' y cualquier otro dato existente.
         UpdateExpression:
           "SET fullName = :fn, username = :un, phoneNumber = :pn, password = :pw, profileCompleted = :pc",
         ExpressionAttributeValues: {
@@ -100,6 +92,32 @@ exports.completeProfile = async (req, res) => {
     res.status(200).json({ success: true, status: "USER_READY" });
   } catch (e) {
     console.error("Error en CompleteProfile:", e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.getProfile = async (req, res) => {
+  const { email } = req.query;
+
+  if (!email) {
+    return res.status(400).json({ message: "Email requerido" });
+  }
+
+  try {
+    const response = await dynamoDB.send(
+      new GetCommand({
+        TableName: "Users",
+        Key: { email: email.toLowerCase().trim() },
+      }),
+    );
+
+    if (!response.Item) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
+    res.status(200).json(response.Item);
+  } catch (e) {
+    console.error("Error en GetProfile:", e);
     res.status(500).json({ error: e.message });
   }
 };
