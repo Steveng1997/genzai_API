@@ -28,12 +28,14 @@ exports.getTasks = async (req, res) => {
     );
     res.status(200).json(data.Items || []);
   } catch (e) {
+    console.error(`❌ Error en getTasks para ${company}:`, e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
+  console.log(`[Task] Actualizando taskId: ${taskId} a estado: ${isCompleted}`);
   try {
     await dynamoDB.send(
       new UpdateCommand({
@@ -43,24 +45,33 @@ exports.completeTask = async (req, res) => {
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
     );
+    console.log(`✅ Task ${taskId} actualizado.`);
     res.status(200).json({ success: true });
   } catch (e) {
+    console.error(`❌ Error en completeTask ${taskId}:`, e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.handleRileyTool = async (req, res) => {
   try {
+    console.log("📥 Recibiendo llamada de herramienta (Riley Tool)");
     const payload = req.body.message || req.body;
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
-    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
+
+    if (!toolCall) {
+      console.warn("⚠️ RileyTool: No se encontró toolCall en el payload");
+      return res.status(400).json({ error: "No tool call data" });
+    }
 
     const args =
       typeof toolCall.function.arguments === "string"
         ? JSON.parse(toolCall.function.arguments)
         : toolCall.function.arguments;
     const { titulo, detalle, company } = args;
+
+    console.log(`📝 Guardando tarea de Riley: ${titulo} para ${company}`);
 
     await dynamoDB.send(
       new PutCommand({
@@ -76,12 +87,12 @@ exports.handleRileyTool = async (req, res) => {
         },
       }),
     );
-    return res
-      .status(200)
-      .json({
-        results: [{ toolCallId: toolCall.id, result: "Tarea guardada" }],
-      });
+    console.log("✅ Tarea de Riley guardada exitosamente.");
+    return res.status(200).json({
+      results: [{ toolCallId: toolCall.id, result: "Tarea guardada" }],
+    });
   } catch (e) {
+    console.error("🔥 Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -91,13 +102,22 @@ exports.handleVapiWebhook = async (req, res) => {
   if (payload.type !== "end-of-call-report")
     return res.status(200).json({ message: "Ignorado" });
 
+  console.log(`📥 Webhook Vapi (End-of-Call): CallId ${payload.call?.id}`);
+
   try {
     const { call, summary } = payload;
     const company = call?.metadata?.company || "genzai";
-    const rawDuration = Number(call?.durationSeconds || payload.durationSeconds || 0);
+    const rawDuration = Number(
+      call?.durationSeconds || payload.durationSeconds || 0,
+    );
     const rawCost = Number(call?.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
 
+    console.log(
+      `📊 Datos de llamada: Duración ${rawDuration}s, Costo ${rawCost}, Respondida: ${wasAnswered}`,
+    );
+
+    console.log(`[DB] Guardando historial en ${TABLE_HISTORY}`);
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -117,6 +137,9 @@ exports.handleVapiWebhook = async (req, res) => {
     );
 
     if (wasAnswered && summary) {
+      console.log(
+        `[DB] Guardando tarea automática por llamada contestada para ${company}`,
+      );
       await dynamoDB.send(
         new PutCommand({
           TableName: TABLE_TASKS,
@@ -131,9 +154,12 @@ exports.handleVapiWebhook = async (req, res) => {
           },
         }),
       );
+      console.log("✅ Tarea automática guardada.");
     }
+
     return res.status(200).json({ success: true });
   } catch (error) {
+    console.error("🔥 Error en handleVapiWebhook:", error.message);
     return res.status(500).json({ error: error.message });
   }
 };
