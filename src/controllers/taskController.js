@@ -110,7 +110,7 @@ exports.handleVapiWebhook = async (req, res) => {
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
-    const rawCost = Number(call?.cost || 0);
+    const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
 
     console.log(
