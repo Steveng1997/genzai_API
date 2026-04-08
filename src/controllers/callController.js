@@ -57,7 +57,8 @@ exports.makeSmartCall = async (req, res) => {
               },
             },
             phoneNumberId:
-              config.vapiPhoneNumberId || process.env.VAPI_PHONE_NUMBER_ID,
+              config.vapiPhoneNumberId ||
+              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             metadata: { company },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
