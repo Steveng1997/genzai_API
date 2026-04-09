@@ -2,6 +2,7 @@ const {
   PutCommand,
   ScanCommand,
   UpdateCommand,
+  GetCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
@@ -29,7 +30,6 @@ exports.getTasks = async (req, res) => {
     );
     res.status(200).json(data.Items || []);
   } catch (e) {
-    console.error(`❌ Error en getTasks para ${company}:`, e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -47,7 +47,6 @@ exports.completeTask = async (req, res) => {
     );
     res.status(200).json({ success: true });
   } catch (e) {
-    console.error(`❌ Error en completeTask ${taskId}:`, e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -97,15 +96,12 @@ exports.handleVapiWebhook = async (req, res) => {
     const company = call?.metadata?.company || "genzai";
     const userEmail = call?.metadata?.email;
 
-    console.log(`⚠️ Metadata recibida:`, JSON.stringify(call?.metadata));
-
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
 
-    // CORRECCIÓN AQUÍ: Redondeamos al entero más cercano (0.5 sube, 0.4 baja)
     const minutesToSubtract = Math.round(rawDuration / 60);
 
     await dynamoDB.send(
@@ -127,25 +123,31 @@ exports.handleVapiWebhook = async (req, res) => {
     );
 
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
-      // Si la llamada fue muy corta y el redondeo da 0, podemos forzar que reste al menos 1 minuto si prefieres
-      // const finalSubtract = minutesToSubtract === 0 ? 1 : minutesToSubtract;
-
-      console.log(
-        `📉 Restando ${minutesToSubtract} minutos (redondeados) a ${userEmail}`,
-      );
-
       try {
-        await dynamoDB.send(
-          new UpdateCommand({
+        const { Item: user } = await dynamoDB.send(
+          new GetCommand({
             TableName: TABLE_USERS,
             Key: { email: userEmail },
-            UpdateExpression: "SET availableMinutes = availableMinutes - :m",
-            ExpressionAttributeValues: { ":m": minutesToSubtract },
           }),
         );
-        console.log("✅ Minutos descontados correctamente.");
+
+        if (user) {
+          const currentMinutesClean = Math.floor(
+            Number(user.availableMinutes || 0),
+          );
+          const finalMinutes = currentMinutesClean - minutesToSubtract;
+
+          await dynamoDB.send(
+            new UpdateCommand({
+              TableName: TABLE_USERS,
+              Key: { email: userEmail },
+              UpdateExpression: "SET availableMinutes = :m",
+              ExpressionAttributeValues: { ":m": finalMinutes },
+            }),
+          );
+        }
       } catch (dbErr) {
-        console.error("❌ Error al descontar minutos:", dbErr.message);
+        console.error("❌ Error al actualizar minutos:", dbErr.message);
       }
     }
 
@@ -168,7 +170,6 @@ exports.handleVapiWebhook = async (req, res) => {
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("🔥 Error en handleVapiWebhook:", error.message);
     return res.status(500).json({ error: error.message });
   }
 };
