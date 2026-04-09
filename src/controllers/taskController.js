@@ -124,7 +124,7 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
-    if (wasAnswered && userEmail) {
+    if (wasAnswered && userEmail && userEmail !== "sin-email") {
       console.log(
         `📉 Restando ${minutesToSubtract.toFixed(2)} minutos a ${userEmail}`,
       );
@@ -132,24 +132,15 @@ exports.handleVapiWebhook = async (req, res) => {
         await dynamoDB.send(
           new UpdateCommand({
             TableName: TABLE_USERS,
-            Key: { email: userEmail.toLowerCase().trim() },
+            Key: { email: userEmail },
             UpdateExpression: "SET availableMinutes = availableMinutes - :m",
-            ExpressionAttributeValues: {
-              ":m": minutesToSubtract,
-            },
+            ExpressionAttributeValues: { ":m": minutesToSubtract },
           }),
         );
         console.log("✅ Minutos descontados correctamente.");
       } catch (dbErr) {
         console.error("❌ Error al descontar minutos:", dbErr.message);
       }
-    } else {
-      console.warn(
-        "🚫 No se restaron minutos. Razón:",
-        !wasAnswered
-          ? "Llamada no contestada"
-          : "Email no encontrado en metadata",
-      );
     }
 
     if (wasAnswered && summary) {

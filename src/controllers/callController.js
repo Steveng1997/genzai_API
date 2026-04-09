@@ -6,7 +6,7 @@ const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI || "AIConfigs";
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
 
 exports.makeSmartCall = async (req, res) => {
-  const { company } = req.body;
+  const { company, email } = req.body;
   console.log(
     `\n[${new Date().toISOString()}] --- INICIO PROCESO DE LLAMADA: ${company} ---`,
   );
@@ -101,7 +101,10 @@ exports.makeSmartCall = async (req, res) => {
             phoneNumberId:
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-            metadata: { company },
+            metadata: {
+              company,
+              email: email ? email.toLowerCase().trim() : "sin-email",
+            },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
