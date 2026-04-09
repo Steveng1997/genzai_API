@@ -104,7 +104,9 @@ exports.handleVapiWebhook = async (req, res) => {
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
-    const minutesToSubtract = rawDuration / 60;
+
+    // CORRECCIÓN AQUÍ: Redondeamos al entero más cercano (0.5 sube, 0.4 baja)
+    const minutesToSubtract = Math.round(rawDuration / 60);
 
     await dynamoDB.send(
       new PutCommand({
@@ -125,9 +127,13 @@ exports.handleVapiWebhook = async (req, res) => {
     );
 
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
+      // Si la llamada fue muy corta y el redondeo da 0, podemos forzar que reste al menos 1 minuto si prefieres
+      // const finalSubtract = minutesToSubtract === 0 ? 1 : minutesToSubtract;
+
       console.log(
-        `📉 Restando ${minutesToSubtract.toFixed(2)} minutos a ${userEmail}`,
+        `📉 Restando ${minutesToSubtract} minutos (redondeados) a ${userEmail}`,
       );
+
       try {
         await dynamoDB.send(
           new UpdateCommand({
