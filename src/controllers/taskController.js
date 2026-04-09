@@ -95,15 +95,15 @@ exports.handleVapiWebhook = async (req, res) => {
   try {
     const { call, summary } = payload;
     const company = call?.metadata?.company || "genzai";
-    const userEmail = call?.metadata?.email; // IMPORTANTE: Debes enviar el email en la metadata desde Vapi
+    const userEmail = call?.metadata?.email;
+
+    console.log(`⚠️ Metadata recibida:`, JSON.stringify(call?.metadata));
 
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
-
-    // Convertimos segundos a minutos decimales para la resta (ej: 90s -> 1.5 min)
     const minutesToSubtract = rawDuration / 60;
 
     await dynamoDB.send(
@@ -124,7 +124,6 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
-    // LÓGICA DE RESTA DE MINUTOS
     if (wasAnswered && userEmail) {
       console.log(
         `📉 Restando ${minutesToSubtract.toFixed(2)} minutos a ${userEmail}`,
@@ -144,6 +143,13 @@ exports.handleVapiWebhook = async (req, res) => {
       } catch (dbErr) {
         console.error("❌ Error al descontar minutos:", dbErr.message);
       }
+    } else {
+      console.warn(
+        "🚫 No se restaron minutos. Razón:",
+        !wasAnswered
+          ? "Llamada no contestada"
+          : "Email no encontrado en metadata",
+      );
     }
 
     if (wasAnswered && summary) {
