@@ -101,7 +101,6 @@ exports.handleVapiWebhook = async (req, res) => {
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
-
     const minutesToSubtract = Math.round(rawDuration / 60);
 
     await dynamoDB.send(
@@ -160,7 +159,7 @@ exports.handleVapiWebhook = async (req, res) => {
             company,
             title: `📞 Llamada: ${call?.customer?.name || "Cliente"}`,
             description: summary,
-            isCompleted: true,
+            isCompleted: false,
             createdAt: new Date().toISOString(),
             source: "Vapi Webhook",
           },
@@ -171,5 +170,36 @@ exports.handleVapiWebhook = async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getUserProfile = async (req, res) => {
+  const { email } = req.query;
+  try {
+    const userResult = await dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_USERS,
+        Key: { email: email },
+      }),
+    );
+
+    if (!userResult.Item)
+      return res.status(404).json({ error: "Usuario no encontrado" });
+
+    const user = userResult.Item;
+    const tasksResult = await dynamoDB.send(
+      new ScanCommand({
+        TableName: TABLE_TASKS,
+        FilterExpression: "company = :c",
+        ExpressionAttributeValues: { ":c": user.company || "genzai" },
+      }),
+    );
+
+    res.status(200).json({
+      ...user,
+      tasks: tasksResult.Items || [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };
