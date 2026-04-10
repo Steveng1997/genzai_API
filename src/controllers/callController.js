@@ -142,7 +142,7 @@ exports.makeSmartCall = async (req, res) => {
                       },
                     },
                     server: {
-                      url: "https://TU-URL-DE-BACKEND.com/api/task/riley-create",
+                      url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/task/riley-create",
                     },
                   },
                 ],

@@ -54,7 +54,7 @@ exports.completeTask = async (req, res) => {
 exports.handleRileyTool = async (req, res) => {
   try {
     const payload = req.body.message || req.body;
-    // Vapi puede enviar toolCall en diferentes niveles del objeto según la versión
+
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
 
@@ -86,7 +86,6 @@ exports.handleRileyTool = async (req, res) => {
       }),
     );
 
-    // Respuesta para que Vapi confirme y Riley pueda hablar de nuevo
     return res.status(200).json({
       results: [
         { toolCallId: toolCall.id, result: "Tarea agendada correctamente" },
@@ -113,8 +112,6 @@ exports.handleVapiWebhook = async (req, res) => {
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
-
-    // Lógica para determinar si contestó (Booleano real)
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
     const minutesToSubtract = Math.round(rawDuration / 60);
 
@@ -132,7 +129,7 @@ exports.handleVapiWebhook = async (req, res) => {
           summary: wasAnswered
             ? summary || "Llamada finalizada"
             : "Llamada no contestada",
-          answered: !!wasAnswered, // Se fuerza booleano
+          answered: !!wasAnswered,
         },
       }),
     );
