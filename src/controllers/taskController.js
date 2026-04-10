@@ -20,14 +20,12 @@ const formatDuration = (seconds) => {
 
 exports.getTasks = async (req, res) => {
   let { tenantId } = req.query;
-  tenantId = (tenantId || "").trim();
-
   try {
     const data = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_TASKS,
-        KeyConditionExpression: "tenantId = :t",
-        ExpressionAttributeValues: { ":t": tenantId },
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": (tenantId || "").trim() },
       }),
     );
     res.status(200).json(data.Items || []);
@@ -42,9 +40,7 @@ exports.completeTask = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_TASKS,
-        Key: {
-          taskId: Number(taskId),
-        },
+        Key: { taskId: Number(taskId) },
         UpdateExpression: "set isCompleted = :val",
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
@@ -74,8 +70,8 @@ exports.handleRileyTool = async (req, res) => {
         TableName: TABLE_TASKS,
         Item: {
           taskId: Date.now(),
-          tenantId: tenantId, // Crucial para que aparezca en el Flutter del cliente correcto
-          company: company,
+          tenantId,
+          company,
           title: titulo || "Nueva Tarea",
           description: detalle || "Sin detalles",
           isCompleted: false,
@@ -85,9 +81,7 @@ exports.handleRileyTool = async (req, res) => {
       }),
     );
     return res.status(200).json({
-      results: [
-        { toolCallId: toolCall.id, result: "Tarea guardada con éxito" },
-      ],
+      results: [{ toolCallId: toolCall.id, result: "Tarea guardada" }],
     });
   } catch (e) {
     return res.status(500).json({ error: e.message });
@@ -132,26 +126,20 @@ exports.handleVapiWebhook = async (req, res) => {
     );
 
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
-      try {
-        const { Item: user } = await dynamoDB.send(
-          new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
+      const { Item: user } = await dynamoDB.send(
+        new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
+      );
+      if (user) {
+        const finalMinutes =
+          Math.floor(Number(user.availableMinutes || 0)) - minutesToSubtract;
+        await dynamoDB.send(
+          new UpdateCommand({
+            TableName: TABLE_USERS,
+            Key: { email: userEmail },
+            UpdateExpression: "SET availableMinutes = :m",
+            ExpressionAttributeValues: { ":m": finalMinutes },
+          }),
         );
-
-        if (user) {
-          const currentMinutes = Math.floor(Number(user.availableMinutes || 0));
-          const finalMinutes = currentMinutes - minutesToSubtract;
-
-          await dynamoDB.send(
-            new UpdateCommand({
-              TableName: TABLE_USERS,
-              Key: { email: userEmail },
-              UpdateExpression: "SET availableMinutes = :m",
-              ExpressionAttributeValues: { ":m": finalMinutes },
-            }),
-          );
-        }
-      } catch (dbErr) {
-        console.error("❌ Error actualizando minutos:", dbErr.message);
       }
     }
 
@@ -172,62 +160,51 @@ exports.handleVapiWebhook = async (req, res) => {
         }),
       );
     }
-
     return res.status(200).json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 };
 
-exports.getUserProfile = async (req, res) => {
-  let { email } = req.query;
-  email = (email || "").toLowerCase().trim();
-
+exports.getHistoryCount = async (req, res) => {
+  const { tenantId, summary } = req.query;
   try {
-    const userResult = await dynamoDB.send(
-      new GetCommand({ TableName: TABLE_USERS, Key: { email } }),
-    );
-
-    if (!userResult.Item)
-      return res.status(404).json({ error: "Usuario no encontrado" });
-
-    const user = userResult.Item;
-
-    const tasksResult = await dynamoDB.send(
+    const response = await dynamoDB.send(
       new ScanCommand({
-        TableName: TABLE_TASKS,
-        FilterExpression: "tenantId = :t",
-        ExpressionAttributeValues: { ":t": user.tenantId || "N/A" },
+        TableName: TABLE_HISTORY,
+        FilterExpression: "tenantId = :t AND summary = :s",
+        ExpressionAttributeValues: {
+          ":t": (tenantId || "").trim(),
+          ":s": summary || "Llamada no contestada",
+        },
+        Select: "COUNT",
       }),
     );
-
-    res.status(200).json({
-      ...user,
-      tasks: tasksResult.Items || [],
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-};
-
-exports.getHistoryCount = async (req, res) => {
-  let { tenantId, summary } = req.query;
-  tenantId = (tenantId || "").trim();
-
-  try {
-    const command = new ScanCommand({
-      TableName: TABLE_HISTORY,
-      FilterExpression: "tenantId = :t AND summary = :s",
-      ExpressionAttributeValues: {
-        ":t": tenantId,
-        ":s": summary || "Llamada no contestada",
-      },
-      Select: "COUNT",
-    });
-
-    const response = await dynamoDB.send(command);
     res.status(200).json({ count: response.Count || 0 });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getTodayTasksCount = async (req, res) => {
+  const { tenantId } = req.query;
+  const today = new Date().toISOString().split("T")[0];
+  try {
+    const data = await dynamoDB.send(
+      new ScanCommand({
+        TableName: TABLE_TASKS,
+        FilterExpression:
+          "tenantId = :t AND begins_with(createdAt, :today) AND isCompleted = :c",
+        ExpressionAttributeValues: {
+          ":t": (tenantId || "").trim(),
+          ":today": today,
+          ":c": false,
+        },
+        Select: "COUNT",
+      }),
+    );
+    res.status(200).json({ count: data.Count || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };

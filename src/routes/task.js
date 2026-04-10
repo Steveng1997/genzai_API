@@ -3,7 +3,8 @@ const router = express.Router();
 const taskController = require("../controllers/taskController");
 
 router.get("/", taskController.getTasks);
-router.get("/count", taskController.getHistoryCount);
+router.get("/call/count", taskController.getHistoryCount);
+router.get("/today/count", taskController.getTodayTasksCount);
 router.post("/riley-create", taskController.handleRileyTool);
 router.patch("/update-status", taskController.completeTask);
 router.post("/webhook-vapi", taskController.handleVapiWebhook);

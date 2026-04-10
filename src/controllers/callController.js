@@ -43,17 +43,18 @@ exports.makeSmartCall = async (req, res) => {
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CLIENTS,
-        FilterExpression: "tenantId = :t",
-        ExpressionAttributeValues: { ":t": tenantId },
+        FilterExpression: "tenantId = :t AND call_active = :a",
+        ExpressionAttributeValues: {
+          ":t": tenantId,
+          ":a": true,
+        },
       }),
     );
 
-    const clientesParaLlamar = (clientes || []).filter(
-      (c) => c.call_active === true,
-    );
+    const clientesParaLlamar = clientes || [];
 
     console.log(
-      `📊 Total Leads: ${clientes?.length || 0} | Activos para llamar: ${clientesParaLlamar.length}`,
+      `📊 Leads encontrados para este tenant: ${clientesParaLlamar.length}`,
     );
 
     if (clientesParaLlamar.length === 0) {
