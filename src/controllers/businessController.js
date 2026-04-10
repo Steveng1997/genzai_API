@@ -74,6 +74,30 @@ exports.confirmPayment = async (req, res) => {
       }),
     );
 
+    const defaultGoals = ["MONEY", "QUANTITY"];
+    await Promise.all(
+      defaultGoals.map((goalType) => {
+        const goalEndDate = new Date();
+        goalEndDate.setDate(now.getDate() + 30);
+
+        return dynamoDB.send(
+          new PutCommand({
+            TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+            Item: {
+              tenantId: tenantId,
+              goalId: crypto.randomUUID(),
+              type: goalType,
+              targetValue: 0,
+              currentValue: 0,
+              days: 30,
+              endDate: goalEndDate.toISOString(),
+              updatedAt: now.toISOString(),
+            },
+          }),
+        );
+      }),
+    );
+
     res.status(200).json({
       success: true,
       tenantId: tenantId,
@@ -85,7 +109,7 @@ exports.confirmPayment = async (req, res) => {
 };
 
 exports.upsertGoal = async (req, res) => {
-  const { tenantId, type, targetValue, days } = req.body;
+  const { tenantId, goalId, type, targetValue, days } = req.body;
 
   if (!tenantId || !type || !targetValue) {
     return res.status(400).json({
@@ -95,13 +119,20 @@ exports.upsertGoal = async (req, res) => {
   }
 
   try {
+    const now = new Date();
+    const goalEndDate = new Date();
+    const numDays = Number(days || 30);
+    goalEndDate.setDate(now.getDate() + numDays);
+
     const goalItem = {
       tenantId: tenantId,
+      goalId: goalId || crypto.randomUUID(),
       type: type,
       targetValue: Number(targetValue),
       currentValue: 0,
-      days: Number(days || 30),
-      updatedAt: new Date().toISOString(),
+      days: numDays,
+      endDate: goalEndDate.toISOString(),
+      updatedAt: now.toISOString(),
     };
 
     await dynamoDB.send(
