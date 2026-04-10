@@ -111,11 +111,39 @@ exports.makeSmartCall = async (req, res) => {
                     - REGLA CRÍTICA: ANTES de usar la herramienta 'create_task', debes preguntar: "¿Qué día y hora le queda bien para la cita?". 
                     - NO puedes agendar sin que el cliente te confirme primero la disponibilidad.
 
-
                     DATOS PARA LA HERRAMIENTA 'create_task' (Solo tras tener fecha y hora):
                     - titulo: Cita Vehículo - ${cliente.fullName}
                     - detalle: Cita acordada para [insertar fecha/hora confirmada por cliente] sobre el interés en ${company}.
                     - tenantId: ${tenantId}`,
+                  },
+                ],
+                tools: [
+                  {
+                    type: "function",
+                    messages: [
+                      {
+                        type: "request-start",
+                        content: "Un momento, estoy agendando tu cita...",
+                      },
+                    ],
+                    function: {
+                      name: "create_task",
+                      description:
+                        "Registra una cita o tarea en el sistema de gestión.",
+                      parameters: {
+                        type: "object",
+                        properties: {
+                          titulo: { type: "string" },
+                          detalle: { type: "string" },
+                          company: { type: "string" },
+                          tenantId: { type: "string" },
+                        },
+                        required: ["titulo", "detalle", "tenantId"],
+                      },
+                    },
+                    server: {
+                      url: "https://TU-URL-DE-BACKEND.com/api/task/riley-create",
+                    },
                   },
                 ],
               },

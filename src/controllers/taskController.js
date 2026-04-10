@@ -54,9 +54,14 @@ exports.completeTask = async (req, res) => {
 exports.handleRileyTool = async (req, res) => {
   try {
     const payload = req.body.message || req.body;
+    // Vapi puede enviar toolCall en diferentes niveles del objeto según la versión
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
-    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
+
+    if (!toolCall) {
+      console.error("❌ No se recibió data de toolCall");
+      return res.status(400).json({ error: "No tool call data" });
+    }
 
     const args =
       typeof toolCall.function.arguments === "string"
@@ -70,8 +75,8 @@ exports.handleRileyTool = async (req, res) => {
         TableName: TABLE_TASKS,
         Item: {
           taskId: Date.now(),
-          tenantId,
-          company,
+          tenantId: tenantId,
+          company: company,
           title: titulo || "Nueva Tarea",
           description: detalle || "Sin detalles",
           isCompleted: false,
@@ -80,10 +85,15 @@ exports.handleRileyTool = async (req, res) => {
         },
       }),
     );
+
+    // Respuesta para que Vapi confirme y Riley pueda hablar de nuevo
     return res.status(200).json({
-      results: [{ toolCallId: toolCall.id, result: "Tarea guardada" }],
+      results: [
+        { toolCallId: toolCall.id, result: "Tarea agendada correctamente" },
+      ],
     });
   } catch (e) {
+    console.error("🔥 Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -103,7 +113,8 @@ exports.handleVapiWebhook = async (req, res) => {
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
-    // Lógica para determinar si contestó
+
+    // Lógica para determinar si contestó (Booleano real)
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
     const minutesToSubtract = Math.round(rawDuration / 60);
 
@@ -118,8 +129,10 @@ exports.handleVapiWebhook = async (req, res) => {
           duration: formatDuration(rawDuration),
           cost: Math.round((rawCost + Number.EPSILON) * 100) / 100,
           timestamp: new Date().toISOString(),
-          summary: wasAnswered ? summary : "Llamada no contestada",
-          answered: !!wasAnswered,
+          summary: wasAnswered
+            ? summary || "Llamada finalizada"
+            : "Llamada no contestada",
+          answered: !!wasAnswered, // Se fuerza booleano
         },
       }),
     );
@@ -165,7 +178,6 @@ exports.handleVapiWebhook = async (req, res) => {
   }
 };
 
-// CONTADOR ACTUALIZADO PARA USAR EL CAMPO 'answered'
 exports.getHistoryCount = async (req, res) => {
   const { tenantId } = req.query;
   try {
@@ -175,7 +187,7 @@ exports.getHistoryCount = async (req, res) => {
         FilterExpression: "tenantId = :t AND answered = :a",
         ExpressionAttributeValues: {
           ":t": (tenantId || "").trim(),
-          ":a": false, // Buscamos solo los que NO contestaron
+          ":a": false,
         },
         Select: "COUNT",
       }),
