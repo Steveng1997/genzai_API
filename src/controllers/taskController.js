@@ -118,10 +118,8 @@ exports.handleVapiWebhook = async (req, res) => {
           duration: formatDuration(rawDuration),
           cost: Math.round((rawCost + Number.EPSILON) * 100) / 100,
           timestamp: new Date().toISOString(),
-          summary: wasAnswered
-            ? summary || "Llamada finalizada"
-            : "Llamada no contestada",
-          answered: wasAnswered, // Booleano clave
+          summary: wasAnswered ? summary : "Llamada no contestada",
+          answered: !!wasAnswered,
         },
       }),
     );
