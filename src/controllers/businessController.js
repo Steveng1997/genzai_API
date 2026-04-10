@@ -120,37 +120,56 @@ exports.upsertGoal = async (req, res) => {
 
   try {
     const now = new Date();
-    const numDays = Number(days || 30);
+    const numDays = Number(days) || 30;
+    const numTargetValue = Number(targetValue) || 0;
+
     const goalEndDate = new Date();
     goalEndDate.setDate(now.getDate() + numDays);
 
-    await dynamoDB.send(
-      new UpdateCommand({
-        TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
-        Key: {
-          tenantId: tenantId,
-          goalId: goalId, // Debe venir del frontend para actualizar la correcta
-        },
-        UpdateExpression:
-          "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
-        ExpressionAttributeNames: {
-          "#t": "type",
-          "#d": "days",
-        },
-        ExpressionAttributeValues: {
-          ":type": type.toUpperCase(),
-          ":tv": Number(targetValue),
-          ":days": numDays,
-          ":ed": goalEndDate.toISOString(),
-          ":ua": now.toISOString(),
-        },
-        ReturnValues: "ALL_NEW",
-      }),
-    );
+    if (goalId && goalId !== "null" && goalId !== "") {
+      await dynamoDB.send(
+        new UpdateCommand({
+          TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+          Key: {
+            tenantId: tenantId,
+            goalId: goalId,
+          },
+          UpdateExpression:
+            "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
+          ExpressionAttributeNames: {
+            "#t": "type",
+            "#d": "days",
+          },
+          ExpressionAttributeValues: {
+            ":type": type.toUpperCase(),
+            ":tv": numTargetValue,
+            ":days": numDays,
+            ":ed": goalEndDate.toISOString(),
+            ":ua": now.toISOString(),
+          },
+        }),
+      );
+    } else {
+      await dynamoDB.send(
+        new PutCommand({
+          TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+          Item: {
+            tenantId: tenantId,
+            goalId: crypto.randomUUID(),
+            type: type.toUpperCase(),
+            targetValue: numTargetValue,
+            currentValue: 0,
+            days: numDays,
+            endDate: goalEndDate.toISOString(),
+            updatedAt: now.toISOString(),
+          },
+        }),
+      );
+    }
 
     res.status(200).json({
       success: true,
-      message: "Goal updated successfully",
+      message: "Goal saved successfully",
     });
   } catch (e) {
     console.error("Upsert Goal Error:", e);
