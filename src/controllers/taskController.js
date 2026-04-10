@@ -103,6 +103,7 @@ exports.handleVapiWebhook = async (req, res) => {
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
+    // Lógica para determinar si contestó
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
     const minutesToSubtract = Math.round(rawDuration / 60);
 
@@ -120,7 +121,7 @@ exports.handleVapiWebhook = async (req, res) => {
           summary: wasAnswered
             ? summary || "Llamada finalizada"
             : "Llamada no contestada",
-          answered: wasAnswered,
+          answered: wasAnswered, // Booleano clave
         },
       }),
     );
@@ -166,16 +167,17 @@ exports.handleVapiWebhook = async (req, res) => {
   }
 };
 
+// CONTADOR ACTUALIZADO PARA USAR EL CAMPO 'answered'
 exports.getHistoryCount = async (req, res) => {
-  const { tenantId, summary } = req.query;
+  const { tenantId } = req.query;
   try {
     const response = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_HISTORY,
-        FilterExpression: "tenantId = :t AND summary = :s",
+        FilterExpression: "tenantId = :t AND answered = :a",
         ExpressionAttributeValues: {
           ":t": (tenantId || "").trim(),
-          ":s": summary || "Llamada no contestada",
+          ":a": false, // Buscamos solo los que NO contestaron
         },
         Select: "COUNT",
       }),
