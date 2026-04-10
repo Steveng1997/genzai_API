@@ -10,17 +10,24 @@ const TABLE_AI_CONFIGS = "AIConfigs";
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   try {
-    const email = (req.body.email || "").toLowerCase().trim();
-    const company = (req.body.company || "").trim();
+    let { email, company, tenantId } = req.body;
 
-    if (!email || !company)
-      return res.status(400).json({ message: "Empresa y usuario requeridos." });
+    email = (email || "").toLowerCase().trim();
+    company = (company || "").trim();
+    tenantId = (tenantId || "").trim();
 
+    if (!tenantId) {
+      return res
+        .status(400)
+        .json({ message: "Falta el identificador de instancia (tenantId)." });
+    }
+
+    // 2. Buscamos la descripción del producto en los pagos usando el tenantId
     const paymentsResponse = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_PAYMENTS,
-        FilterExpression: "email = :e AND company = :c",
-        ExpressionAttributeValues: { ":e": email, ":c": company },
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": tenantId },
       }),
     );
 
@@ -40,23 +47,26 @@ exports.setupAssistant = async (req, res) => {
 
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company}`,
-      instructions: `Eres Riley, la asistente de "${company}". Especialista en "${productDescription}". Solo usa tus archivos para responder. Si detectas un compromiso o tarea, usa la herramienta create_task.`,
+      instructions: `Eres Riley, asistente virtual de la empresa "${company}" con ID ${tenantId}. 
+      Tu especialidad: ${productDescription}. 
+      REGLA: Si el cliente muestra interés real, usa 'create_task' para agendar. 
+      IMPORTANTE: Siempre debes pasar el tenantId "${tenantId}" a la función create_task.`,
       model: "gpt-4o",
       tools: [
         { type: "file_search" },
-        { type: "code_interpreter" },
         {
           type: "function",
           function: {
             name: "create_task",
+            description: "Crea una tarea o compromiso en el CRM.",
             parameters: {
               type: "object",
               properties: {
-                titulo: { type: "string" },
-                detalle: { type: "string" },
-                company: { type: "string" },
+                titulo: { type: "string", description: "Resumen de la tarea" },
+                detalle: { type: "string", description: "Descripción amplia" },
+                tenantId: { type: "string", enum: [tenantId] }, // Forzamos a que use EL MISMO ID
               },
-              required: ["titulo", "company"],
+              required: ["titulo", "tenantId"],
             },
           },
         },
@@ -72,25 +82,24 @@ exports.setupAssistant = async (req, res) => {
       new PutCommand({
         TableName: TABLE_AI_CONFIGS,
         Item: {
-          businessId: company,
+          businessId: tenantId,
+          tenantId: tenantId,
+          company: company,
           ownerEmail: email,
           openaiAssistantId: assistant.id,
           openaiFileIds: fileIds,
           assistantId: "4c266662-68db-4046-a13f-8c021c84919c",
           vapiPhoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-          businessName: company,
           product: productDescription,
           updatedAt: new Date().toISOString(),
         },
       }),
     );
 
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Entrenamiento completado para " + company,
-      });
+    res.status(200).json({
+      success: true,
+      message: `Riley configurada correctamente bajo el ID: ${tenantId}`,
+    });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {

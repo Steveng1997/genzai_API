@@ -8,23 +8,33 @@ const {
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
 
 exports.getAllClients = async (req, res) => {
-  const { company } = req.query;
+  let { tenantId } = req.query;
+  tenantId = (tenantId || "").trim();
+
   try {
+    if (!tenantId) {
+      return res
+        .status(400)
+        .json({ error: "El tenantId es requerido para filtrar clientes" });
+    }
+
     const command = new ScanCommand({
       TableName: TABLE_CLIENTS,
-      FilterExpression: "company = :c",
-      ExpressionAttributeValues: { ":c": company },
+      FilterExpression: "tenantId = :t",
+      ExpressionAttributeValues: { ":t": tenantId },
     });
+
     const response = await docClient.send(command);
     res.status(200).json(response.Items || []);
   } catch (error) {
+    console.error("Error getAllClients:", error);
     res.status(500).json({ error: "Error al obtener clientes" });
   }
 };
 
 exports.saveClient = async (req, res) => {
   try {
-    const {
+    let {
       fullName,
       identification,
       phone,
@@ -32,20 +42,26 @@ exports.saveClient = async (req, res) => {
       createdAt,
       call_active,
       company,
+      tenantId,
     } = req.body;
 
-    if (!phone || !company) {
+    tenantId = (tenantId || "").trim();
+    company = (company || "").trim();
+    const cleanPhone = Number(phone);
+
+    if (!cleanPhone || !tenantId) {
       return res
         .status(400)
-        .json({ error: "El teléfono y la compañía son obligatorios" });
+        .json({ error: "El teléfono y el tenantId son obligatorios" });
     }
 
     const clientItem = {
-      phone: Number(phone),
+      phone: cleanPhone,
+      tenantId: tenantId,
       company: company,
-      fullName: fullName || "N/A",
-      identification: identification || "N/A",
-      city: city || "N/A",
+      fullName: (fullName || "N/A").trim(),
+      identification: (identification || "N/A").trim(),
+      city: (city || "N/A").trim(),
       call_active: call_active !== undefined ? call_active : true,
       updatedAt: new Date().toISOString(),
       createdAt: createdAt || new Date().toISOString(),
@@ -60,6 +76,7 @@ exports.saveClient = async (req, res) => {
 
     res.status(200).json(clientItem);
   } catch (error) {
+    console.error("Error saveClient:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -67,13 +84,14 @@ exports.saveClient = async (req, res) => {
 exports.deleteClient = async (req, res) => {
   try {
     const { phone } = req.params;
+
     await docClient.send(
       new DeleteCommand({
         TableName: TABLE_CLIENTS,
         Key: { phone: Number(phone) },
       }),
     );
-    res.status(200).json({ message: "Eliminado" });
+    res.status(200).json({ message: "Cliente eliminado correctamente" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
