@@ -47,10 +47,11 @@ exports.setupAssistant = async (req, res) => {
 
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company}`,
-      instructions: `Eres Riley, asistente virtual de la empresa "${company}" con ID ${tenantId}. 
-      Tu especialidad: ${productDescription}. 
-      REGLA: Si el cliente muestra interés real, usa 'create_task' para agendar. 
-      IMPORTANTE: Siempre debes pasar el tenantId "${tenantId}" a la función create_task.`,
+      instructions: `Eres Riley, el asistente virtual inteligente de la empresa "${company}". 
+      Tu objetivo es ayudar a los clientes con información sobre: ${productDescription}.
+      REGLA COSMICA: Si el cliente muestra interés en una cita, compra o contacto, usa la función 'create_task'.
+      Bajo ninguna circunstancia pidas el ID al cliente. Usa internamente siempre: ${tenantId}.
+      Es obligatorio pasar el tenantId y el nombre de la empresa a todas las funciones.`,
       model: "gpt-4o",
       tools: [
         { type: "file_search" },
@@ -58,15 +59,19 @@ exports.setupAssistant = async (req, res) => {
           type: "function",
           function: {
             name: "create_task",
-            description: "Crea una tarea o compromiso en el CRM.",
+            description: "Registra un compromiso o tarea en el sistema Genzai.",
             parameters: {
               type: "object",
               properties: {
-                titulo: { type: "string", description: "Resumen de la tarea" },
-                detalle: { type: "string", description: "Descripción amplia" },
-                tenantId: { type: "string", enum: [tenantId] }, // Forzamos a que use EL MISMO ID
+                titulo: { type: "string", description: "Resumen corto" },
+                detalle: {
+                  type: "string",
+                  description: "Explicación detallada",
+                },
+                company: { type: "string", enum: [company] },
+                tenantId: { type: "string", enum: [tenantId] },
               },
-              required: ["titulo", "tenantId"],
+              required: ["titulo", "tenantId", "company"],
             },
           },
         },

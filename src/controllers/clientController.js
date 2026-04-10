@@ -88,7 +88,10 @@ exports.deleteClient = async (req, res) => {
     await docClient.send(
       new DeleteCommand({
         TableName: TABLE_CLIENTS,
-        Key: { phone: Number(phone) },
+        Key: {
+          tenantId: tenantId,
+          phone: Number(phone),
+        },
       }),
     );
     res.status(200).json({ message: "Cliente eliminado correctamente" });

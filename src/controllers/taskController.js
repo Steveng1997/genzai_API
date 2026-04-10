@@ -18,7 +18,6 @@ const formatDuration = (seconds) => {
   return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 };
 
-// 1. Obtener tareas filtradas por ID único
 exports.getTasks = async (req, res) => {
   let { tenantId } = req.query;
   tenantId = (tenantId || "").trim();
@@ -27,7 +26,7 @@ exports.getTasks = async (req, res) => {
     const data = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_TASKS,
-        FilterExpression: "tenantId = :t",
+        KeyConditionExpression: "tenantId = :t",
         ExpressionAttributeValues: { ":t": tenantId },
       }),
     );
@@ -43,7 +42,9 @@ exports.completeTask = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_TASKS,
-        Key: { taskId: Number(taskId) },
+        Key: {
+          taskId: Number(taskId),
+        },
         UpdateExpression: "set isCompleted = :val",
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
