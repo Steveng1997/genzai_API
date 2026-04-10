@@ -111,7 +111,7 @@ exports.confirmPayment = async (req, res) => {
 exports.upsertGoal = async (req, res) => {
   const { tenantId, goalId, type, targetValue, days } = req.body;
 
-  if (!tenantId || !type || !targetValue) {
+  if (!tenantId || !type || targetValue === undefined) {
     return res.status(400).json({
       success: false,
       message: "Required fields missing",
@@ -120,33 +120,40 @@ exports.upsertGoal = async (req, res) => {
 
   try {
     const now = new Date();
-    const goalEndDate = new Date();
     const numDays = Number(days || 30);
+    const goalEndDate = new Date();
     goalEndDate.setDate(now.getDate() + numDays);
 
-    const goalItem = {
-      tenantId: tenantId,
-      goalId: goalId || crypto.randomUUID(),
-      type: type,
-      targetValue: Number(targetValue),
-      currentValue: 0,
-      days: numDays,
-      endDate: goalEndDate.toISOString(),
-      updatedAt: now.toISOString(),
-    };
-
     await dynamoDB.send(
-      new PutCommand({
+      new UpdateCommand({
         TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
-        Item: goalItem,
+        Key: {
+          tenantId: tenantId,
+          goalId: goalId, // Debe venir del frontend para actualizar la correcta
+        },
+        UpdateExpression:
+          "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
+        ExpressionAttributeNames: {
+          "#t": "type",
+          "#d": "days",
+        },
+        ExpressionAttributeValues: {
+          ":type": type.toUpperCase(),
+          ":tv": Number(targetValue),
+          ":days": numDays,
+          ":ed": goalEndDate.toISOString(),
+          ":ua": now.toISOString(),
+        },
+        ReturnValues: "ALL_NEW",
       }),
     );
 
     res.status(200).json({
       success: true,
-      goal: goalItem,
+      message: "Goal updated successfully",
     });
   } catch (e) {
+    console.error("Upsert Goal Error:", e);
     res.status(500).json({ success: false, message: e.message });
   }
 };
