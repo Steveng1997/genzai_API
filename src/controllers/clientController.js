@@ -104,19 +104,27 @@ exports.saveClient = async (req, res) => {
 
 exports.deleteClient = async (req, res) => {
   try {
-    const { phone } = req.params;
+    const { tenantId, phone } = req.params;
+
+    if (!tenantId || !phone) {
+      return res
+        .status(400)
+        .json({ error: "tenantId y phone son obligatorios" });
+    }
 
     await docClient.send(
       new DeleteCommand({
         TableName: TABLE_CLIENTS,
         Key: {
-          tenantId: tenantId,
+          tenantId: String(tenantId).trim(),
           phone: Number(phone),
         },
       }),
     );
+
     res.status(200).json({ message: "Cliente eliminado correctamente" });
   } catch (error) {
+    console.error("Error deleteClient:", error);
     res.status(500).json({ error: error.message });
   }
 };
