@@ -209,3 +209,25 @@ exports.getUserProfile = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+exports.getHistoryCount = async (req, res) => {
+  let { tenantId, summary } = req.query;
+  tenantId = (tenantId || "").trim();
+
+  try {
+    const command = new ScanCommand({
+      TableName: TABLE_HISTORY,
+      FilterExpression: "tenantId = :t AND summary = :s",
+      ExpressionAttributeValues: {
+        ":t": tenantId,
+        ":s": summary || "Llamada no contestada",
+      },
+      Select: "COUNT",
+    });
+
+    const response = await dynamoDB.send(command);
+    res.status(200).json({ count: response.Count || 0 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};

@@ -32,6 +32,27 @@ exports.getAllClients = async (req, res) => {
   }
 };
 
+exports.getClientCount = async (req, res) => {
+  let { tenantId } = req.query;
+  tenantId = (tenantId || "").trim();
+
+  try {
+    if (!tenantId) return res.status(400).json({ error: "tenantId requerido" });
+
+    const command = new ScanCommand({
+      TableName: TABLE_CLIENTS,
+      FilterExpression: "tenantId = :t",
+      ExpressionAttributeValues: { ":t": tenantId },
+      Select: "COUNT",
+    });
+
+    const response = await docClient.send(command);
+    res.status(200).json({ count: response.Count || 0 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.saveClient = async (req, res) => {
   try {
     let {
