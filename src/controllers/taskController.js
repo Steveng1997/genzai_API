@@ -60,7 +60,7 @@ exports.completeTask = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_TASKS,
-        Key: { taskId: Number(taskId) },
+        Key: { tenantId: String(tenantId).trim(), taskId: Number(taskId) },
         UpdateExpression: "set isCompleted = :val",
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
