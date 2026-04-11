@@ -120,22 +120,24 @@ exports.upsertGoal = async (req, res) => {
     const numDays = Number(days) || 30;
     const goalEndDate = new Date();
     goalEndDate.setDate(now.getDate() + numDays);
-    const typeUpper = type.toUpperCase();
+
+    const typeUpper = type.toUpperCase().trim();
 
     let finalGoalId =
       goalId && goalId !== "null" && goalId !== "" ? goalId : null;
 
     if (!finalGoalId) {
-      const searchType =
-        oldType && oldType !== "" ? oldType.toUpperCase() : typeUpper;
+      const searchType = (oldType && oldType !== "" ? oldType : type)
+        .toUpperCase()
+        .trim();
 
       const existing = await dynamoDB.send(
         new QueryCommand({
           TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
           KeyConditionExpression: "tenantId = :t",
-          FilterExpression: "#type = :type",
-          ExpressionAttributeNames: { "#type": "type" },
-          ExpressionAttributeValues: { ":t": tenantId, ":type": searchType },
+          FilterExpression: "#typeAttr = :typeVal",
+          ExpressionAttributeNames: { "#typeAttr": "type" },
+          ExpressionAttributeValues: { ":t": tenantId, ":typeVal": searchType },
         }),
       );
 
@@ -160,8 +162,8 @@ exports.upsertGoal = async (req, res) => {
           goalId: finalGoalId,
         },
         UpdateExpression:
-          "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
-        ExpressionAttributeNames: { "#t": "type", "#d": "days" },
+          "SET #tp = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
+        ExpressionAttributeNames: { "#tp": "type", "#d": "days" },
         ExpressionAttributeValues: {
           ":type": typeUpper,
           ":tv": Number(targetValue),
