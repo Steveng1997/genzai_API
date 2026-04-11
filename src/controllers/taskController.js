@@ -55,12 +55,21 @@ exports.getTodayTasks = async (req, res) => {
 };
 
 exports.completeTask = async (req, res) => {
-  const { taskId, isCompleted } = req.body;
+  const { taskId, isCompleted, tenantId } = req.body;
   try {
+    if (!tenantId || !taskId) {
+      return res
+        .status(400)
+        .json({ error: "Faltan parámetros: tenantId o taskId" });
+    }
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_TASKS,
-        Key: { tenantId: String(tenantId).trim(), taskId: Number(taskId) },
+        Key: {
+          tenantId: String(tenantId).trim(),
+          taskId: Number(taskId),
+        },
         UpdateExpression: "set isCompleted = :val",
         ExpressionAttributeValues: { ":val": isCompleted },
       }),
