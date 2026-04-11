@@ -34,6 +34,26 @@ exports.getTasks = async (req, res) => {
   }
 };
 
+exports.getTodayTasks = async (req, res) => {
+  const { tenantId } = req.query;
+  const today = new Date().toISOString().split("T")[0];
+  try {
+    const data = await dynamoDB.send(
+      new ScanCommand({
+        TableName: TABLE_TASKS,
+        FilterExpression: "tenantId = :t AND begins_with(createdAt, :today)",
+        ExpressionAttributeValues: {
+          ":t": (tenantId || "").trim(),
+          ":today": today,
+        },
+      }),
+    );
+    res.status(200).json(data.Items || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted } = req.body;
   try {
@@ -54,7 +74,6 @@ exports.completeTask = async (req, res) => {
 exports.handleRileyTool = async (req, res) => {
   try {
     const payload = req.body.message || req.body;
-
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
 
