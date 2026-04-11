@@ -109,7 +109,7 @@ exports.confirmPayment = async (req, res) => {
 };
 
 exports.upsertGoal = async (req, res) => {
-  const { tenantId, goalId, type, targetValue, days } = req.body;
+  const { tenantId, goalId, type, targetValue, days, oldType } = req.body;
 
   if (!tenantId || !type || targetValue === undefined) {
     return res.status(400).json({ success: false, message: "Missing fields" });
@@ -122,16 +122,20 @@ exports.upsertGoal = async (req, res) => {
     goalEndDate.setDate(now.getDate() + numDays);
     const typeUpper = type.toUpperCase();
 
-    let finalGoalId = goalId;
+    let finalGoalId =
+      goalId && goalId !== "null" && goalId !== "" ? goalId : null;
 
-    if (!finalGoalId || finalGoalId === "null") {
+    if (!finalGoalId) {
+      const searchType =
+        oldType && oldType !== "" ? oldType.toUpperCase() : typeUpper;
+
       const existing = await dynamoDB.send(
         new QueryCommand({
           TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
           KeyConditionExpression: "tenantId = :t",
           FilterExpression: "#type = :type",
           ExpressionAttributeNames: { "#type": "type" },
-          ExpressionAttributeValues: { ":t": tenantId, ":type": typeUpper },
+          ExpressionAttributeValues: { ":t": tenantId, ":type": searchType },
         }),
       );
 
@@ -140,47 +144,37 @@ exports.upsertGoal = async (req, res) => {
       }
     }
 
-    if (finalGoalId && finalGoalId !== "null") {
-      await dynamoDB.send(
-        new UpdateCommand({
-          TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
-          Key: {
-            tenantId: tenantId,
-            goalId: finalGoalId,
-          },
-          UpdateExpression:
-            "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
-          ExpressionAttributeNames: { "#t": "type", "#d": "days" },
-          ExpressionAttributeValues: {
-            ":type": typeUpper,
-            ":tv": Number(targetValue),
-            ":days": numDays,
-            ":ed": goalEndDate.toISOString(),
-            ":ua": now.toISOString(),
-          },
-        }),
-      );
-    } else {
-      await dynamoDB.send(
-        new PutCommand({
-          TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
-          Item: {
-            tenantId: tenantId,
-            goalId: crypto.randomUUID(),
-            type: typeUpper,
-            targetValue: Number(targetValue),
-            currentValue: 0,
-            days: numDays,
-            endDate: goalEndDate.toISOString(),
-            updatedAt: now.toISOString(),
-          },
-        }),
-      );
+    if (!finalGoalId) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "No se encontró el registro para actualizar. Solo se pueden crear metas mediante el pago.",
+      });
     }
+
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+        Key: {
+          tenantId: tenantId,
+          goalId: finalGoalId,
+        },
+        UpdateExpression:
+          "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
+        ExpressionAttributeNames: { "#t": "type", "#d": "days" },
+        ExpressionAttributeValues: {
+          ":type": typeUpper,
+          ":tv": Number(targetValue),
+          ":days": numDays,
+          ":ed": goalEndDate.toISOString(),
+          ":ua": now.toISOString(),
+        },
+      }),
+    );
 
     res.status(200).json({ success: true });
   } catch (e) {
-    console.error("Upsert Goal Error:", e);
+    console.error("Update Goal Error:", e);
     res.status(500).json({ success: false, message: e.message });
   }
 };
