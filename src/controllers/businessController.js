@@ -74,7 +74,7 @@ exports.confirmPayment = async (req, res) => {
       }),
     );
 
-    const defaultGoals = ["MONEY", "QUANTITY"];
+    const defaultGoals = ["DINERO", "CANTIDAD"];
     await Promise.all(
       defaultGoals.map((goalType) => {
         const goalEndDate = new Date();
