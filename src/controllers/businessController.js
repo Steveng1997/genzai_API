@@ -112,37 +112,48 @@ exports.upsertGoal = async (req, res) => {
   const { tenantId, goalId, type, targetValue, days } = req.body;
 
   if (!tenantId || !type || targetValue === undefined) {
-    return res.status(400).json({
-      success: false,
-      message: "Required fields missing",
-    });
+    return res.status(400).json({ success: false, message: "Missing fields" });
   }
 
   try {
     const now = new Date();
     const numDays = Number(days) || 30;
-    const numTargetValue = Number(targetValue) || 0;
-
     const goalEndDate = new Date();
     goalEndDate.setDate(now.getDate() + numDays);
+    const typeUpper = type.toUpperCase();
 
-    if (goalId && goalId !== "null" && goalId !== "") {
+    let finalGoalId = goalId;
+
+    if (!finalGoalId || finalGoalId === "null") {
+      const existing = await dynamoDB.send(
+        new QueryCommand({
+          TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+          KeyConditionExpression: "tenantId = :t",
+          FilterExpression: "#type = :type",
+          ExpressionAttributeNames: { "#type": "type" },
+          ExpressionAttributeValues: { ":t": tenantId, ":type": typeUpper },
+        }),
+      );
+
+      if (existing.Items && existing.Items.length > 0) {
+        finalGoalId = existing.Items[0].goalId;
+      }
+    }
+
+    if (finalGoalId && finalGoalId !== "null") {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
           Key: {
             tenantId: tenantId,
-            goalId: goalId,
+            goalId: finalGoalId,
           },
           UpdateExpression:
             "SET #t = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
-          ExpressionAttributeNames: {
-            "#t": "type",
-            "#d": "days",
-          },
+          ExpressionAttributeNames: { "#t": "type", "#d": "days" },
           ExpressionAttributeValues: {
-            ":type": type.toUpperCase(),
-            ":tv": numTargetValue,
+            ":type": typeUpper,
+            ":tv": Number(targetValue),
             ":days": numDays,
             ":ed": goalEndDate.toISOString(),
             ":ua": now.toISOString(),
@@ -156,8 +167,8 @@ exports.upsertGoal = async (req, res) => {
           Item: {
             tenantId: tenantId,
             goalId: crypto.randomUUID(),
-            type: type.toUpperCase(),
-            targetValue: numTargetValue,
+            type: typeUpper,
+            targetValue: Number(targetValue),
             currentValue: 0,
             days: numDays,
             endDate: goalEndDate.toISOString(),
@@ -167,10 +178,7 @@ exports.upsertGoal = async (req, res) => {
       );
     }
 
-    res.status(200).json({
-      success: true,
-      message: "Goal saved successfully",
-    });
+    res.status(200).json({ success: true });
   } catch (e) {
     console.error("Upsert Goal Error:", e);
     res.status(500).json({ success: false, message: e.message });
