@@ -122,7 +122,6 @@ exports.upsertGoal = async (req, res) => {
     goalEndDate.setDate(now.getDate() + numDays);
 
     const typeUpper = type.toUpperCase().trim();
-
     let finalGoalId =
       goalId && goalId !== "null" && goalId !== "" ? goalId : null;
 
@@ -135,14 +134,17 @@ exports.upsertGoal = async (req, res) => {
         new QueryCommand({
           TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
           KeyConditionExpression: "tenantId = :t",
-          FilterExpression: "#typeAttr = :typeVal",
-          ExpressionAttributeNames: { "#typeAttr": "type" },
-          ExpressionAttributeValues: { ":t": tenantId, ":typeVal": searchType },
+          ExpressionAttributeValues: { ":t": tenantId },
         }),
       );
 
       if (existing.Items && existing.Items.length > 0) {
-        finalGoalId = existing.Items[0].goalId;
+        const matchedGoal = existing.Items.find(
+          (item) => item.type.toUpperCase().trim() === searchType,
+        );
+        if (matchedGoal) {
+          finalGoalId = matchedGoal.goalId;
+        }
       }
     }
 
