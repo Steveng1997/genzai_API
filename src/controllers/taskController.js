@@ -62,7 +62,6 @@ exports.completeTask = async (req, res) => {
         .status(400)
         .json({ error: "Faltan parámetros: tenantId o taskId" });
     }
-
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_TASKS,
@@ -85,19 +84,12 @@ exports.handleRileyTool = async (req, res) => {
     const payload = req.body.message || req.body;
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
-
-    if (!toolCall) {
-      console.error("❌ No se recibió data de toolCall");
-      return res.status(400).json({ error: "No tool call data" });
-    }
-
+    if (!toolCall) return res.status(400).json({ error: "No tool call data" });
     const args =
       typeof toolCall.function.arguments === "string"
         ? JSON.parse(toolCall.function.arguments)
         : toolCall.function.arguments;
-
     const { titulo, detalle, company, tenantId } = args;
-
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_TASKS,
@@ -113,14 +105,12 @@ exports.handleRileyTool = async (req, res) => {
         },
       }),
     );
-
     return res.status(200).json({
       results: [
         { toolCallId: toolCall.id, result: "Tarea agendada correctamente" },
       ],
     });
   } catch (e) {
-    console.error("🔥 Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -129,20 +119,17 @@ exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   if (payload.type !== "end-of-call-report")
     return res.status(200).json({ message: "Ignorado" });
-
   try {
     const { call, summary } = payload;
     const tenantId = call?.metadata?.tenantId;
     const company = call?.metadata?.company;
     const userEmail = call?.metadata?.email;
-
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
     const minutesToSubtract = Math.round(rawDuration / 60);
-
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -161,7 +148,6 @@ exports.handleVapiWebhook = async (req, res) => {
         },
       }),
     );
-
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
@@ -179,7 +165,6 @@ exports.handleVapiWebhook = async (req, res) => {
         );
       }
     }
-
     if (wasAnswered && summary) {
       await dynamoDB.send(
         new PutCommand({
