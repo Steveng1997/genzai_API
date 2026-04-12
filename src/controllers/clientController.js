@@ -3,6 +3,7 @@ const {
   ScanCommand,
   PutCommand,
   DeleteCommand,
+  UpdateCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const { v4: uuidv4 } = require("uuid");
 
@@ -10,19 +11,14 @@ const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
 
 exports.getAllClients = async (req, res) => {
   let { tenantId } = req.query;
-  tenantId = (tenantId || "").trim();
-
   try {
-    if (!tenantId) {
+    if (!tenantId)
       return res.status(400).json({ error: "El tenantId es requerido" });
-    }
-
     const command = new ScanCommand({
       TableName: TABLE_CLIENTS,
       FilterExpression: "tenantId = :t",
-      ExpressionAttributeValues: { ":t": tenantId },
+      ExpressionAttributeValues: { ":t": tenantId.trim() },
     });
-
     const response = await docClient.send(command);
     res.status(200).json(response.Items || []);
   } catch (error) {
@@ -32,18 +28,14 @@ exports.getAllClients = async (req, res) => {
 
 exports.getClientCount = async (req, res) => {
   let { tenantId } = req.query;
-  tenantId = (tenantId || "").trim();
-
   try {
     if (!tenantId) return res.status(400).json({ error: "tenantId requerido" });
-
     const command = new ScanCommand({
       TableName: TABLE_CLIENTS,
       FilterExpression: "tenantId = :t",
-      ExpressionAttributeValues: { ":t": tenantId },
+      ExpressionAttributeValues: { ":t": tenantId.trim() },
       Select: "COUNT",
     });
-
     const response = await docClient.send(command);
     res.status(200).json({ count: response.Count || 0 });
   } catch (error) {
@@ -64,18 +56,13 @@ exports.saveClient = async (req, res) => {
       tenantId,
       clientId,
     } = req.body;
-
-    tenantId = (tenantId || "").trim();
-    const cleanPhone = Number(phone);
-
-    if (!tenantId) {
+    if (!tenantId)
       return res.status(400).json({ error: "El tenantId es obligatorio" });
-    }
 
     const clientItem = {
-      tenantId: tenantId,
+      tenantId: tenantId.trim(),
       clientId: clientId || uuidv4(),
-      phone: cleanPhone,
+      phone: Number(phone),
       company: company,
       fullName: (fullName || "N/A").trim(),
       identification: (identification || "N/A").trim(),
@@ -86,37 +73,25 @@ exports.saveClient = async (req, res) => {
     };
 
     await docClient.send(
-      new PutCommand({
-        TableName: TABLE_CLIENTS,
-        Item: clientItem,
-      }),
+      new PutCommand({ TableName: TABLE_CLIENTS, Item: clientItem }),
     );
-
     res.status(200).json(clientItem);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-const { UpdateCommand } = require("@aws-sdk/lib-dynamodb");
-
 exports.updateBasicInfo = async (req, res) => {
   try {
     const { tenantId, clientId, fullName, phone, email } = req.body;
-
-    if (!tenantId || !clientId) {
+    if (!tenantId || !clientId)
       return res
         .status(400)
         .json({ error: "tenantId y clientId son requeridos" });
-    }
 
     const command = new UpdateCommand({
       TableName: TABLE_CLIENTS,
-      Key: {
-        tenantId: tenantId.trim(),
-        clientId: clientId.trim(),
-      },
-
+      Key: { tenantId: tenantId.trim(), clientId: clientId.trim() },
       UpdateExpression:
         "set fullName = :n, phone = :p, email = :e, updatedAt = :u",
       ExpressionAttributeValues: {
@@ -138,12 +113,10 @@ exports.updateBasicInfo = async (req, res) => {
 exports.deleteClient = async (req, res) => {
   try {
     const { tenantId, clientId } = req.params;
-
-    if (!tenantId || !clientId) {
+    if (!tenantId || !clientId)
       return res
         .status(400)
         .json({ error: "tenantId y clientId son obligatorios" });
-    }
 
     await docClient.send(
       new DeleteCommand({
@@ -154,7 +127,6 @@ exports.deleteClient = async (req, res) => {
         },
       }),
     );
-
     res.status(200).json({ message: "Cliente eliminado correctamente" });
   } catch (error) {
     res.status(500).json({ error: error.message });
