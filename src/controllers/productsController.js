@@ -1,6 +1,15 @@
-const { dynamoDb } = require("../config/awsConfig");
+const docClient = require("../services/dynamo");
+const {
+  GetCommand,
+  QueryCommand,
+  PutCommand,
+  DeleteCommand,
+  UpdateCommand,
+} = require("@aws-sdk/lib-dynamodb");
 
-const createProduct = async (req, res) => {
+const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS || "Products";
+
+exports.createProduct = async (req, res) => {
   try {
     const {
       tenantId,
@@ -37,23 +46,24 @@ const createProduct = async (req, res) => {
     }
 
     const newProduct = {
-      tenantId,
-      productId,
-      name,
+      tenantId: tenantId.trim(),
+      productId: productId.trim(),
+      name: (name || "N/A").trim(),
       description: description || "",
       price: Number(price) || 0,
       colors: colorValue,
       productType: productType || "General",
       ...vehicleFields,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
-    await dynamoDb
-      .put({
-        TableName: "Products",
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLE_PRODUCTS,
         Item: newProduct,
-      })
-      .promise();
+      }),
+    );
 
     res.status(201).json({ message: "Product created", data: newProduct });
   } catch (error) {
@@ -61,72 +71,83 @@ const createProduct = async (req, res) => {
   }
 };
 
-const getProductsByTenant = async (req, res) => {
+exports.getProductsByTenant = async (req, res) => {
   const { tenantId } = req.params;
   try {
-    const params = {
-      TableName: "Products",
-      KeyConditionExpression: "tenantId = :tId",
-      ExpressionAttributeValues: { ":tId": tenantId },
-    };
+    if (!tenantId)
+      return res.status(400).json({ error: "tenantId is required" });
 
-    const data = await dynamoDb.query(params).promise();
-    res.json(data.Items);
+    const command = new QueryCommand({
+      TableName: TABLE_PRODUCTS,
+      KeyConditionExpression: "tenantId = :tId",
+      ExpressionAttributeValues: { ":tId": tenantId.trim() },
+    });
+
+    const data = await docClient.send(command);
+    res.status(200).json(data.Items || []);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-const updateProduct = async (req, res) => {
+exports.updateProduct = async (req, res) => {
   try {
     const { tenantId, productId, updates } = req.body;
 
-    if (!tenantId || !productId) {
-      return res.status(400).json({ error: "Missing primary keys" });
+    if (!tenantId || !productId || !updates) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    let updateExp = "set ";
-    let attrValues = {};
-    const keys = Object.keys(updates);
+    let updateExp = "set updatedAt = :u";
+    let attrValues = { ":u": new Date().toISOString() };
+    let attrNames = {};
 
+    const keys = Object.keys(updates);
     keys.forEach((key, i) => {
-      updateExp += `${key} = :v${i}${i < keys.length - 1 ? ", " : ""}`;
+      updateExp += `, #field${i} = :v${i}`;
+      attrNames[`#field${i}`] = key;
       attrValues[`:v${i}`] = updates[key];
     });
 
-    const params = {
-      TableName: "Products",
-      Key: { tenantId, productId },
+    const command = new UpdateCommand({
+      TableName: TABLE_PRODUCTS,
+      Key: {
+        tenantId: tenantId.trim(),
+        productId: productId.trim(),
+      },
       UpdateExpression: updateExp,
+      ExpressionAttributeNames: attrNames,
       ExpressionAttributeValues: attrValues,
       ReturnValues: "ALL_NEW",
-    };
+    });
 
-    const result = await dynamoDb.update(params).promise();
-    res.json({ message: "Updated", data: result.Attributes });
+    const result = await docClient.send(command);
+    res.status(200).json({ message: "Updated", data: result.Attributes });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-const deleteProduct = async (req, res) => {
+exports.deleteProduct = async (req, res) => {
   const { tenantId, productId } = req.params;
   try {
-    await dynamoDb
-      .delete({
-        TableName: "Products",
-        Key: { tenantId, productId },
-      })
-      .promise();
-    res.json({ message: "Product deleted" });
+    if (!tenantId || !productId) {
+      return res
+        .status(400)
+        .json({ error: "tenantId and productId are required" });
+    }
+
+    await docClient.send(
+      new DeleteCommand({
+        TableName: TABLE_PRODUCTS,
+        Key: {
+          tenantId: String(tenantId).trim(),
+          productId: String(productId).trim(),
+        },
+      }),
+    );
+    res.status(200).json({ message: "Product deleted" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-};
-
-module.exports = {
-  createProduct,
-  getProductsByTenant,
-  updateProduct,
-  deleteProduct,
 };
