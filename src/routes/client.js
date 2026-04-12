@@ -5,6 +5,6 @@ const clientController = require("../controllers/clientController");
 router.get("/", clientController.getAllClients);
 router.get("/count", clientController.getClientCount);
 router.post("/save", clientController.saveClient);
-router.delete("/delete/:tenantId/:phone", clientController.deleteClient);
+router.delete("/delete/:tenantId/:clientId", clientController.deleteClient);
 
 module.exports = router;

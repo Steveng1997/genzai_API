@@ -12,16 +12,9 @@ exports.makeSmartCall = async (req, res) => {
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
 
-  console.log(
-    `\n[${new Date().toISOString()}] --- INICIO PROCESO DE LLAMADA: ${company} (ID: ${tenantId}) ---`,
-  );
-
   try {
     if (!tenantId) {
-      console.error("❌ Error: tenantId no proporcionado");
-      return res.status(400).json({
-        message: "El identificador de instancia (tenantId) es requerido.",
-      });
+      return res.status(400).json({ message: "El tenantId es requerido." });
     }
 
     const { Item: config } = await dynamoDB.send(
@@ -32,30 +25,18 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config) {
-      console.error(
-        `❌ Error: No se encontró configuración de IA para el ID: ${tenantId}`,
-      );
-      return res
-        .status(404)
-        .json({ message: "No hay IA configurada para esta empresa" });
+      return res.status(404).json({ message: "No hay IA configurada" });
     }
 
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CLIENTS,
         FilterExpression: "tenantId = :t AND call_active = :a",
-        ExpressionAttributeValues: {
-          ":t": tenantId,
-          ":a": true,
-        },
+        ExpressionAttributeValues: { ":t": tenantId, ":a": true },
       }),
     );
 
     const clientesParaLlamar = clientes || [];
-
-    console.log(
-      `📊 Leads encontrados para este tenant: ${clientesParaLlamar.length}`,
-    );
 
     if (clientesParaLlamar.length === 0) {
       return res
@@ -81,8 +62,6 @@ exports.makeSmartCall = async (req, res) => {
           ? rawPhone
           : `+57${rawPhone}`;
 
-        console.log(`📞 Marcando -> ${cliente.fullName} (${formattedPhone})`);
-
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
@@ -95,8 +74,8 @@ exports.makeSmartCall = async (req, res) => {
                 messages: [
                   {
                     role: "system",
-                    content: `Eres Riley, asesor experto de "${company}". Estás hablando con ${cliente.fullName}.
-       
+                    content: `Eres Riley, asesor experto de "${company}". Estás hablando con ${cliente.fullName}. inicia la conversación diciendo: "${saludoTemporal} ${cliente.fullName}".
+        
                     REGLAS CRÍTICAS DE INTERACCIÓN:
                     1. Si el cliente pide una CITA directamente, ignora la búsqueda de inventario y procede al PROTOCOLO DE CITA inmediatamente.
                     2. Si el cliente pregunta por un vehículo/producto, consulta tus documentos. Si no encuentras el modelo exacto, ofrece uno similar del PDF. No digas "verificaré inventario" si vas a tardar; habla mientras buscas.
@@ -131,7 +110,6 @@ exports.makeSmartCall = async (req, res) => {
                         properties: {
                           titulo: { type: "string" },
                           detalle: { type: "string" },
-                          company: { type: "string" },
                           tenantId: { type: "string" },
                         },
                         required: ["titulo", "detalle", "tenantId"],
@@ -147,33 +125,19 @@ exports.makeSmartCall = async (req, res) => {
             phoneNumberId:
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-            metadata: {
-              tenantId,
-              company,
-              email: email || "sin-email",
-            },
+            metadata: { tenantId, company, email: email || "sin-email" },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
-
-        console.log(
-          `✅ Llamada exitosa: ${cliente.fullName}. ID: ${response.data.id}`,
-        );
         return response.data;
       } catch (err) {
-        console.error(
-          `❌ Error en Vapi (${cliente.fullName}):`,
-          err.response?.data || err.message,
-        );
         return { error: true, client: cliente.fullName };
       }
     });
 
     const results = await Promise.all(calls);
-    console.log(`--- FIN PROCESO: ${company} ---\n`);
     res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error("🔥 ERROR CRÍTICO EN MAKESMARTCALL:", e);
     res.status(500).json({ error: e.message });
   }
 };

@@ -4,6 +4,7 @@ const {
   PutCommand,
   DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
+const { v4: uuidv4 } = require("uuid");
 
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
 
@@ -13,9 +14,7 @@ exports.getAllClients = async (req, res) => {
 
   try {
     if (!tenantId) {
-      return res
-        .status(400)
-        .json({ error: "El tenantId es requerido para filtrar clientes" });
+      return res.status(400).json({ error: "El tenantId es requerido" });
     }
 
     const command = new ScanCommand({
@@ -27,7 +26,6 @@ exports.getAllClients = async (req, res) => {
     const response = await docClient.send(command);
     res.status(200).json(response.Items || []);
   } catch (error) {
-    console.error("Error getAllClients:", error);
     res.status(500).json({ error: "Error al obtener clientes" });
   }
 };
@@ -64,21 +62,20 @@ exports.saveClient = async (req, res) => {
       call_active,
       company,
       tenantId,
+      clientId,
     } = req.body;
 
     tenantId = (tenantId || "").trim();
-    company = (company || "").trim();
     const cleanPhone = Number(phone);
 
-    if (!cleanPhone || !tenantId) {
-      return res
-        .status(400)
-        .json({ error: "El teléfono y el tenantId son obligatorios" });
+    if (!tenantId) {
+      return res.status(400).json({ error: "El tenantId es obligatorio" });
     }
 
     const clientItem = {
-      phone: cleanPhone,
       tenantId: tenantId,
+      clientId: clientId || uuidv4(),
+      phone: cleanPhone,
       company: company,
       fullName: (fullName || "N/A").trim(),
       identification: (identification || "N/A").trim(),
@@ -97,19 +94,18 @@ exports.saveClient = async (req, res) => {
 
     res.status(200).json(clientItem);
   } catch (error) {
-    console.error("Error saveClient:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
 exports.deleteClient = async (req, res) => {
   try {
-    const { tenantId, phone } = req.params;
+    const { tenantId, clientId } = req.params;
 
-    if (!tenantId || !phone) {
+    if (!tenantId || !clientId) {
       return res
         .status(400)
-        .json({ error: "tenantId y phone son obligatorios" });
+        .json({ error: "tenantId y clientId son obligatorios" });
     }
 
     await docClient.send(
@@ -117,14 +113,13 @@ exports.deleteClient = async (req, res) => {
         TableName: TABLE_CLIENTS,
         Key: {
           tenantId: String(tenantId).trim(),
-          phone: Number(phone),
+          clientId: String(clientId).trim(),
         },
       }),
     );
 
     res.status(200).json({ message: "Cliente eliminado correctamente" });
   } catch (error) {
-    console.error("Error deleteClient:", error);
     res.status(500).json({ error: error.message });
   }
 };
