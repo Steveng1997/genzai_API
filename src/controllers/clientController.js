@@ -98,6 +98,43 @@ exports.saveClient = async (req, res) => {
   }
 };
 
+const { UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+
+exports.updateBasicInfo = async (req, res) => {
+  try {
+    const { tenantId, clientId, fullName, phone, email } = req.body;
+
+    if (!tenantId || !clientId) {
+      return res
+        .status(400)
+        .json({ error: "tenantId y clientId son requeridos" });
+    }
+
+    const command = new UpdateCommand({
+      TableName: TABLE_CLIENTS,
+      Key: {
+        tenantId: tenantId.trim(),
+        clientId: clientId.trim(),
+      },
+
+      UpdateExpression:
+        "set fullName = :n, phone = :p, email = :e, updatedAt = :u",
+      ExpressionAttributeValues: {
+        ":n": (fullName || "N/A").trim(),
+        ":p": Number(phone),
+        ":e": (email || "N/A").trim(),
+        ":u": new Date().toISOString(),
+      },
+      ReturnValues: "ALL_NEW",
+    });
+
+    const response = await docClient.send(command);
+    res.status(200).json(response.Attributes);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.deleteClient = async (req, res) => {
   try {
     const { tenantId, clientId } = req.params;
