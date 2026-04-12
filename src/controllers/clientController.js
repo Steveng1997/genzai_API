@@ -83,7 +83,8 @@ exports.saveClient = async (req, res) => {
 
 exports.updateBasicInfo = async (req, res) => {
   try {
-    const { tenantId, clientId, fullName, phone, email } = req.body;
+    const { tenantId, clientId, fullName, phone, email, identification } =
+      req.body;
     if (!tenantId || !clientId)
       return res
         .status(400)
@@ -93,11 +94,12 @@ exports.updateBasicInfo = async (req, res) => {
       TableName: TABLE_CLIENTS,
       Key: { tenantId: tenantId.trim(), clientId: clientId.trim() },
       UpdateExpression:
-        "set fullName = :n, phone = :p, email = :e, updatedAt = :u",
+        "set fullName = :n, phone = :p, email = :e, identification = :i, updatedAt = :u",
       ExpressionAttributeValues: {
         ":n": (fullName || "N/A").trim(),
         ":p": Number(phone),
         ":e": (email || "N/A").trim(),
+        ":i": (identification || "N/A").trim(),
         ":u": new Date().toISOString(),
       },
       ReturnValues: "ALL_NEW",
