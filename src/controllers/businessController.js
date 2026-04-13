@@ -151,8 +151,7 @@ exports.upsertGoal = async (req, res) => {
     if (!finalGoalId) {
       return res.status(404).json({
         success: false,
-        message:
-          "No se encontró el registro para actualizar. Solo se pueden crear metas mediante el pago.",
+        message: "No se encontró el registro para actualizar.",
       });
     }
 
@@ -184,13 +183,7 @@ exports.upsertGoal = async (req, res) => {
 };
 
 exports.getGoals = async (req, res) => {
-  const { tenantId } = req.query;
-
-  if (!tenantId) {
-    return res
-      .status(400)
-      .json({ success: false, message: "tenantId required" });
-  }
+  const { tenantId } = req.params;
 
   try {
     const data = await dynamoDB.send(
@@ -205,6 +198,28 @@ exports.getGoals = async (req, res) => {
 
     res.status(200).json(data.Items);
   } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+exports.getPayments = async (req, res) => {
+  const { tenantId } = req.params;
+
+  try {
+    const data = await dynamoDB.send(
+      new QueryCommand({
+        TableName: process.env.DYNAMODB_TABLE_PAYMENTS || "Payments",
+        IndexName: "TenantIdIndex",
+        KeyConditionExpression: "tenantId = :t",
+        ExpressionAttributeValues: {
+          ":t": tenantId,
+        },
+      }),
+    );
+
+    res.status(200).json(data.Items);
+  } catch (e) {
+    console.error("Get Payments Error:", e);
     res.status(500).json({ success: false, message: e.message });
   }
 };
