@@ -22,7 +22,6 @@ exports.updatePrompt = async (req, res) => {
   }
 
   try {
-    // 1. PRIMERO LEEMOS EL PROMPT ACTUAL
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -41,9 +40,7 @@ exports.updatePrompt = async (req, res) => {
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
         UpdateExpression: "SET systemPrompt = :p",
-        ExpressionAttributeValues: {
-          ":p": newFullPrompt,
-        },
+        ExpressionAttributeValues: { ":p": newFullPrompt },
       }),
     );
 
@@ -52,7 +49,6 @@ exports.updatePrompt = async (req, res) => {
       message: "Instrucciones acumuladas correctamente.",
     });
   } catch (e) {
-    console.error("❌ ERROR:", e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -61,9 +57,6 @@ exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   try {
     let { email, company, tenantId } = req.body;
-
-    email = (email || "").toLowerCase().trim();
-    company = (company || "").trim();
     tenantId = (tenantId || "").trim();
 
     if (!tenantId) {
@@ -72,18 +65,12 @@ exports.setupAssistant = async (req, res) => {
         .json({ message: "Falta el identificador de instancia (tenantId)." });
     }
 
-    const paymentsResponse = await dynamoDB.send(
-      new ScanCommand({
-        TableName: TABLE_PAYMENTS,
-        FilterExpression: "tenantId = :t",
-        ExpressionAttributeValues: { ":t": tenantId },
+    const { Item } = await dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_CONFIGS,
+        Key: { businessId: tenantId },
       }),
     );
-
-    const businessData = paymentsResponse.Items && paymentsResponse.Items[0];
-    const productDescription = businessData
-      ? businessData.sellingProduct
-      : "productos generales";
 
     const fileIds = [];
     for (const file of files) {
@@ -94,65 +81,85 @@ exports.setupAssistant = async (req, res) => {
       fileIds.push(uploadResponse.id);
     }
 
-    const assistant = await openai.beta.assistants.create({
-      name: `Riley - ${company}`,
-      instructions: `Eres Riley, el asistente virtual inteligente de la empresa "${company}". 
-      Tu objetivo es ayudar a los clientes con información sobre: ${productDescription}.
-      REGLA COSMICA: Si el cliente muestra interés en una cita, compra o contacto, usa la función 'create_task'.
-      Bajo ninguna circunstancia pidas el ID al cliente. Usa internamente siempre: ${tenantId}.
-      Es obligatorio pasar el tenantId y el nombre de la empresa a todas las funciones.`,
-      model: "gpt-4o",
-      tools: [
-        { type: "file_search" },
-        {
-          type: "function",
-          function: {
-            name: "create_task",
-            description: "Registra un compromiso o tarea en el sistema Genzai.",
-            parameters: {
-              type: "object",
-              properties: {
-                titulo: { type: "string", description: "Resumen corto" },
-                detalle: {
-                  type: "string",
-                  description: "Explicación detallada",
+    let assistantId = Item?.openaiAssistantId;
+
+    if (!assistantId) {
+      const paymentsResponse = await dynamoDB.send(
+        new ScanCommand({
+          TableName: TABLE_PAYMENTS,
+          FilterExpression: "tenantId = :t",
+          ExpressionAttributeValues: { ":t": tenantId },
+        }),
+      );
+
+      const businessData = paymentsResponse.Items && paymentsResponse.Items[0];
+      const productDescription = businessData
+        ? businessData.sellingProduct
+        : "productos generales";
+
+      const assistant = await openai.beta.assistants.create({
+        name: `Riley - ${company}`,
+        instructions: `Eres Riley, el asistente virtual de "${company}". Info: ${productDescription}. Usa 'create_task' para citas. tenantId: ${tenantId}.`,
+        model: "gpt-4o",
+        tools: [
+          { type: "file_search" },
+          {
+            type: "function",
+            function: {
+              name: "create_task",
+              description: "Registra compromiso.",
+              parameters: {
+                type: "object",
+                properties: {
+                  titulo: { type: "string", description: "Resumen corto" },
+                  detalle: {
+                    type: "string",
+                    description: "Explicación detallada",
+                  },
+                  company: { type: "string", enum: [company] },
+                  tenantId: { type: "string", enum: [tenantId] },
                 },
-                company: { type: "string", enum: [company] },
-                tenantId: { type: "string", enum: [tenantId] },
+                required: ["titulo", "tenantId", "company"],
               },
-              required: ["titulo", "tenantId", "company"],
             },
           },
-        },
-      ],
-      tool_resources: {
-        file_search: {
-          vector_stores: fileIds.length > 0 ? [{ file_ids: fileIds }] : [],
-        },
-      },
-    });
+        ],
+      });
+      assistantId = assistant.id;
+    }
+
+    if (fileIds.length > 0) {
+      const vectorStore = await openai.beta.vectorStores.create({
+        name: `Store-${tenantId}`,
+        file_ids: fileIds,
+      });
+
+      await openai.beta.assistants.update(assistantId, {
+        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
+      });
+    }
 
     await dynamoDB.send(
-      new PutCommand({
+      new UpdateCommand({
         TableName: TABLE_CONFIGS,
-        Item: {
-          businessId: tenantId,
-          tenantId: tenantId,
-          company: company,
-          ownerEmail: email,
-          openaiAssistantId: assistant.id,
-          openaiFileIds: fileIds,
-          assistantId: "4c266662-68db-4046-a13f-8c021c84919c",
-          vapiPhoneNumberId: "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-          product: productDescription,
-          updatedAt: new Date().toISOString(),
+        Key: { businessId: tenantId },
+        UpdateExpression:
+          "SET openaiAssistantId = :a, openaiFileIds = list_append(if_not_exists(openaiFileIds, :empty_list), :f), updatedAt = :u, company = :c, ownerEmail = :e, tenantId = :t",
+        ExpressionAttributeValues: {
+          ":a": assistantId,
+          ":f": fileIds,
+          ":u": new Date().toISOString(),
+          ":c": company,
+          ":e": email.toLowerCase(),
+          ":t": tenantId,
+          ":empty_list": [],
         },
       }),
     );
 
     res.status(200).json({
       success: true,
-      message: `Riley configurada correctamente bajo el ID: ${tenantId}`,
+      message: `Riley entrenada y actualizada para: ${tenantId}`,
     });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
