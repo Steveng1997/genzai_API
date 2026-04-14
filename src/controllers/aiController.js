@@ -21,14 +21,18 @@ exports.updatePrompt = async (req, res) => {
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression: "set systemPrompt = :p",
-        ExpressionAttributeValues: { ":p": systemPrompt },
+        UpdateExpression:
+          "SET systemPrompt = if_not_exists(systemPrompt, :empty) + :p",
+        ExpressionAttributeValues: {
+          ":p": `\n- ${systemPrompt}`,
+          ":empty": "",
+        },
       }),
     );
 
     res.status(200).json({
       success: true,
-      message: "Instrucciones actualizadas correctamente.",
+      message: "Nuevo conocimiento acumulado correctamente.",
     });
   } catch (e) {
     console.error("Error en updatePrompt:", e);
@@ -51,7 +55,6 @@ exports.setupAssistant = async (req, res) => {
         .json({ message: "Falta el identificador de instancia (tenantId)." });
     }
 
-    // 2. Buscamos la descripción del producto en los pagos usando el tenantId
     const paymentsResponse = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_PAYMENTS,
