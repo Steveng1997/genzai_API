@@ -83,7 +83,7 @@ exports.makeSmartCall = async (req, res) => {
             customer: { number: formattedPhone, name: cliente.fullName },
             assistantId: config.assistantId,
             serverUrl:
-              "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/report/webhook",
+              "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
             assistantOverrides: {
               model: {
                 provider: "openai",

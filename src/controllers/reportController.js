@@ -6,7 +6,13 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_REPORTS = process.env.DYNAMODB_TABLE_REPORTS;
 
 exports.handleVapiWebhook = async (req, res) => {
+  const vapiHeaderSecret = req.headers["x-vapi-secret"];
+  const localSecret = process.env.VAPI_SECRET_KEY;
   const payload = req.body;
+
+  if (vapiHeaderSecret !== localSecret) {
+    return res.status(401).json({ message: "No autorizado" });
+  }
 
   if (payload.message?.type !== "end-of-call-report") {
     return res.status(200).send();
