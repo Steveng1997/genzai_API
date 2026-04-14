@@ -79,6 +79,9 @@ exports.completeTask = async (req, res) => {
 };
 
 exports.handleRileyTool = async (req, res) => {
+  if (req.headers["x-vapi-secret"] !== process.env.VAPI_SECRET_KEY)
+    return res.status(401).send();
+
   try {
     const payload = req.body.message || req.body;
     const toolCall =
@@ -115,6 +118,9 @@ exports.handleRileyTool = async (req, res) => {
 };
 
 exports.handleVapiWebhook = async (req, res) => {
+  if (req.headers["x-vapi-secret"] !== process.env.VAPI_SECRET_KEY)
+    return res.status(401).send();
+
   const payload = req.body.message || req.body;
   if (payload.type !== "end-of-call-report")
     return res.status(200).json({ message: "Ignorado" });
