@@ -21,25 +21,37 @@ exports.updatePrompt = async (req, res) => {
   }
 
   try {
+    // 1. PRIMERO LEEMOS EL PROMPT ACTUAL
+    const { Item } = await dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_CONFIGS,
+        Key: { businessId: tenantId },
+      }),
+    );
+
+    let currentPrompt = Item?.systemPrompt || "";
+    let newFullPrompt =
+      currentPrompt === ""
+        ? `- ${systemPrompt}`
+        : `${currentPrompt}\n- ${systemPrompt}`;
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression:
-          "SET systemPrompt = if_not_exists(systemPrompt, :empty) + :p",
+        UpdateExpression: "SET systemPrompt = :p",
         ExpressionAttributeValues: {
-          ":p": `\n- ${systemPrompt}`,
-          ":empty": "",
+          ":p": newFullPrompt,
         },
       }),
     );
 
     res.status(200).json({
       success: true,
-      message: "Nuevo conocimiento acumulado correctamente.",
+      message: "Instrucciones acumuladas correctamente.",
     });
   } catch (e) {
-    console.error("Error en updatePrompt:", e);
+    console.error("❌ ERROR:", e);
     res.status(500).json({ error: e.message });
   }
 };
