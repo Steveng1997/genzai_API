@@ -5,6 +5,37 @@ const axios = require("axios");
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI || "AIConfigs";
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
 
+exports.updatePrompt = async (req, res) => {
+  const { tenantId, systemPrompt } = req.body;
+
+  if (!tenantId || systemPrompt === undefined) {
+    return res
+      .status(400)
+      .json({ message: "tenantId y systemPrompt son requeridos." });
+  }
+
+  try {
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: TABLE_CONFIGS,
+        Key: { businessId: tenantId }, // Verifica que la PK en AWS sea businessId
+        UpdateExpression: "set systemPrompt = :p",
+        ExpressionAttributeValues: { ":p": systemPrompt },
+      }),
+    );
+
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Instrucciones actualizadas correctamente.",
+      });
+  } catch (e) {
+    console.error("Error en updatePrompt:", e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
 exports.makeSmartCall = async (req, res) => {
   let { company, email, tenantId } = req.body;
 

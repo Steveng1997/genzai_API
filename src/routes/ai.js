@@ -24,4 +24,6 @@ router.post(
   aiController.setupAssistant,
 );
 
+router.post("/update-prompt", aiController.updatePrompt);
+
 module.exports = router;
