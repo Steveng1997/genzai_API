@@ -2,6 +2,7 @@ const OpenAI = require("openai");
 const {
   PutCommand,
   UpdateCommand,
+  GetCommand,
   ScanCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
