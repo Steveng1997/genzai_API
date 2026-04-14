@@ -31,7 +31,7 @@ app.use("/api/ai", require("./src/routes/ai"));
 app.use("/api/call", require("./src/routes/call"));
 app.use("/api/plan", require("./src/routes/plan"));
 app.use("/api/products", require("./src/routes/products"));
-app.use("/api/report", require("./src/routes/report"));
+app.use("/api/vapi", require("./src/routes/vapi"));
 
 app.use((req, res) => {
   console.log(`⚠️ ERROR 404: Ruta no encontrada -> ${req.method} ${req.url}`);
