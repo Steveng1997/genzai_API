@@ -17,6 +17,7 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(400).json({ message: "El tenantId es requerido." });
     }
 
+    // 1. Obtener la configuración de la IA desde DynamoDB
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -25,9 +26,23 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config) {
-      return res.status(404).json({ message: "No hay IA configurada" });
+      return res
+        .status(404)
+        .json({ message: "No hay IA configurada para este negocio." });
     }
 
+    // 2. VALIDACIÓN DE MINUTOS: Si es 0 o menos, bloqueamos la llamada
+    const availableMinutes = config.availableMinutes || 0;
+    if (availableMinutes <= 0) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "No tienes minutos disponibles para realizar llamadas. Por favor, recarga tu saldo.",
+        minutes: availableMinutes,
+      });
+    }
+
+    // 3. Obtener clientes activos para este tenant
     const { Items: clientes } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CLIENTS,
@@ -41,9 +56,10 @@ exports.makeSmartCall = async (req, res) => {
     if (clientesParaLlamar.length === 0) {
       return res
         .status(404)
-        .json({ message: "No hay clientes activos para llamar" });
+        .json({ message: "No hay clientes activos para llamar." });
     }
 
+    // 4. Lógica de saludo dinámico por hora
     const ahora = new Date();
     const horaColombia = new Date(
       ahora.toLocaleString("en-US", { timeZone: "America/Bogota" }),
@@ -55,12 +71,17 @@ exports.makeSmartCall = async (req, res) => {
     else if (horaColombia >= 18 || horaColombia < 5)
       saludoTemporal = "Buenas noches";
 
+    // 5. PROCESO DE LLAMADAS
     const calls = clientesParaLlamar.map(async (cliente) => {
       try {
         let rawPhone = cliente.phone.toString().replace(/\s+/g, "");
         let formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
+
+        // IA DINÁMICA: Usamos el prompt guardado por el cliente o uno por defecto
+        const customInstructions =
+          config.systemPrompt || `Eres un asesor experto de "${company}".`;
 
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
@@ -74,21 +95,24 @@ exports.makeSmartCall = async (req, res) => {
                 messages: [
                   {
                     role: "system",
-                    content: `Eres Riley, asesor experto de "${company}". Estás hablando con ${cliente.fullName}. inicia la conversación diciendo: "${saludoTemporal} ${cliente.fullName}".
+                    content: `${customInstructions}
         
-                    REGLAS CRÍTICAS DE INTERACCIÓN:
-                    1. Si el cliente pide una CITA directamente, ignora la búsqueda de inventario y procede al PROTOCOLO DE CITA inmediatamente.
-                    2. Si el cliente pregunta por un vehículo/producto, consulta tus documentos. Si no encuentras el modelo exacto, ofrece uno similar del PDF. No digas "verificaré inventario" si vas a tardar; habla mientras buscas.
-                    3. Nunca cuelgues la llamada tú mismo a menos que el cliente se despida.
+                    CONTEXTO DINÁMICO:
+                    - Estás hablando con: ${cliente.fullName}. 
+                    - Inicia diciendo: "${saludoTemporal} ${cliente.fullName}".
+                    - Empresa: ${company}.
+
+                    REGLAS DE OPERACIÓN:
+                    1. Si pide cita, usa el PROTOCOLO DE CITA.
+                    2. No inventes datos, si no sabes algo, ofrece ayuda general.
+                    3. No cuelgues hasta que el cliente se despida.
 
                     PROTOCOLO DE CITA:
-                    - PASO A: Pregunta "¿Qué día y hora le queda bien para la cita?".
-                    - PASO B: Una vez el cliente confirme día y hora, utiliza la herramienta 'create_task'.
-                    - NO inventes disponibilidad, simplemente registra lo que el cliente solicita.
+                    - Paso 1: Pregunta fecha y hora.
+                    - Paso 2: Usa 'create_task' para registrarla.
 
-                    DATOS PARA 'create_task':
+                    DATOS PARA TAREA:
                     - titulo: Cita - ${cliente.fullName}
-                    - detalle: Interesado en ${company}. Fecha acordada: [Día y Hora].
                     - tenantId: ${tenantId}`,
                   },
                 ],
@@ -103,8 +127,7 @@ exports.makeSmartCall = async (req, res) => {
                     ],
                     function: {
                       name: "create_task",
-                      description:
-                        "Registra una cita o tarea en el sistema de gestión.",
+                      description: "Registra una cita o tarea en el sistema.",
                       parameters: {
                         type: "object",
                         properties: {
@@ -131,6 +154,7 @@ exports.makeSmartCall = async (req, res) => {
         );
         return response.data;
       } catch (err) {
+        console.error(`Error llamando a ${cliente.fullName}:`, err.message);
         return { error: true, client: cliente.fullName };
       }
     });
@@ -138,6 +162,7 @@ exports.makeSmartCall = async (req, res) => {
     const results = await Promise.all(calls);
     res.status(200).json({ success: true, results });
   } catch (e) {
+    console.error("Error general en makeSmartCall:", e);
     res.status(500).json({ error: e.message });
   }
 };
