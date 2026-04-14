@@ -6,10 +6,9 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
-const TABLE_TASKS = process.env.DYNAMODB_TABLE_TASK || "Tasks";
-const TABLE_HISTORY =
-  process.env.DYNAMODB_TABLE_HISTORY || "ConsumptionHistory";
-const TABLE_USERS = "Users";
+const TABLE_TASKS = process.env.DYNAMODB_TABLE_TASK;
+const TABLE_HISTORY = process.env.DYNAMODB_TABLE_HISTORY;
+const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
 const formatDuration = (seconds) => {
   if (!seconds || seconds <= 0) return "0:00";

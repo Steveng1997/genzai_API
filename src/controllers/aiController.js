@@ -9,8 +9,8 @@ const dynamoDB = require("../services/dynamo");
 const fs = require("fs");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const TABLE_PAYMENTS = process.env.DYNAMODB_TABLE_PAYMENTS || "Payments";
-const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI || "AIConfigs";
+const TABLE_PAYMENTS = process.env.DYNAMODB_TABLE_PAYMENTS;
+const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 
 exports.updatePrompt = async (req, res) => {
   const { tenantId, systemPrompt } = req.body;

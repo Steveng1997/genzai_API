@@ -1,5 +1,5 @@
 const dynamoDB = require("../services/dynamo");
-const bcrypt = require("bcryptjs"); // Importamos bcrypt
+const bcrypt = require("bcryptjs");
 const {
   GetCommand,
   UpdateCommand,

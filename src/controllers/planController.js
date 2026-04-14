@@ -1,7 +1,7 @@
 const dynamoDB = require("../services/dynamo");
 const { GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 
-const TABLE_NAME = process.env.DYNAMODB_TABLE_PLANS || "PlanDefinitions";
+const TABLE_NAME = process.env.DYNAMODB_TABLE_PLANS;
 
 const getAllPlans = async (req, res) => {
   try {

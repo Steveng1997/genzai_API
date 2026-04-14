@@ -3,7 +3,7 @@ const { PutCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const TABLE_REPORTS = process.env.DYNAMODB_TABLE_REPORTS || "BusinessReports";
+const TABLE_REPORTS = process.env.DYNAMODB_TABLE_REPORTS;
 
 exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body;

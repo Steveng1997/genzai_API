@@ -38,7 +38,7 @@ exports.confirmPayment = async (req, res) => {
 
     await dynamoDB.send(
       new PutCommand({
-        TableName: process.env.DYNAMODB_TABLE_PAYMENTS || "Payments",
+        TableName: process.env.DYNAMODB_TABLE_PAYMENTS,
         Item: {
           paymentId: paymentId,
           email: emailKey,
@@ -58,7 +58,7 @@ exports.confirmPayment = async (req, res) => {
 
     await dynamoDB.send(
       new UpdateCommand({
-        TableName: process.env.DYNAMODB_TABLE_USERS || "Users",
+        TableName: process.env.DYNAMODB_TABLE_USERS,
         Key: { email: emailKey },
         UpdateExpression:
           "SET availableMinutes = :m, planStatus = :s, expirationDate = :v, currentPlan = :p, whatsappEnabled = :w, company = :c, tenantId = :t",
@@ -82,7 +82,7 @@ exports.confirmPayment = async (req, res) => {
 
         return dynamoDB.send(
           new PutCommand({
-            TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+            TableName: process.env.DYNAMODB_TABLE_GOALS,
             Item: {
               tenantId: tenantId,
               goalId: crypto.randomUUID(),
@@ -132,7 +132,7 @@ exports.upsertGoal = async (req, res) => {
 
       const existing = await dynamoDB.send(
         new QueryCommand({
-          TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+          TableName: process.env.DYNAMODB_TABLE_GOALS,
           KeyConditionExpression: "tenantId = :t",
           ExpressionAttributeValues: { ":t": tenantId },
         }),
@@ -157,7 +157,7 @@ exports.upsertGoal = async (req, res) => {
 
     await dynamoDB.send(
       new UpdateCommand({
-        TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+        TableName: process.env.DYNAMODB_TABLE_GOALS,
         Key: {
           tenantId: tenantId,
           goalId: finalGoalId,
@@ -188,7 +188,7 @@ exports.getGoals = async (req, res) => {
   try {
     const data = await dynamoDB.send(
       new QueryCommand({
-        TableName: process.env.DYNAMODB_TABLE_GOALS || "Goals",
+        TableName: process.env.DYNAMODB_TABLE_GOALS,
         KeyConditionExpression: "tenantId = :t",
         ExpressionAttributeValues: {
           ":t": tenantId,
@@ -208,7 +208,7 @@ exports.getPayments = async (req, res) => {
   try {
     const data = await dynamoDB.send(
       new QueryCommand({
-        TableName: process.env.DYNAMODB_TABLE_PAYMENTS || "Payments",
+        TableName: process.env.DYNAMODB_TABLE_PAYMENTS,
         IndexName: "TenantIdIndex",
         KeyConditionExpression: "tenantId = :t",
         ExpressionAttributeValues: {

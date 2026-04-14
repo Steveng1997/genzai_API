@@ -7,7 +7,7 @@ const {
   UpdateCommand,
 } = require("@aws-sdk/lib-dynamodb");
 
-const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS || "Products";
+const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS;
 
 exports.createProduct = async (req, res) => {
   try {

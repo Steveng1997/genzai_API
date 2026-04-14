@@ -7,7 +7,7 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const { v4: uuidv4 } = require("uuid");
 
-const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
+const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS;
 
 exports.getAllClients = async (req, res) => {
   let { tenantId } = req.query;

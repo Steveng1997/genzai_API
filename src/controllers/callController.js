@@ -2,8 +2,8 @@ const { GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 const axios = require("axios");
 
-const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI || "AIConfigs";
-const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS || "Clients";
+const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
+const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS;
 
 exports.makeSmartCall = async (req, res) => {
   let { company, email, tenantId } = req.body;
