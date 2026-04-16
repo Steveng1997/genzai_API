@@ -7,6 +7,7 @@ const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS;
 
 exports.makeSmartCall = async (req, res) => {
   let { company, email, tenantId } = req.body;
+  console.log(">>> Iniciando makeSmartCall para tenantId:", tenantId);
 
   company = (company || "").trim();
   email = (email || "").toLowerCase().trim();
@@ -25,6 +26,7 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config) {
+      console.log("ERR: No se encontró configuración en TABLE_CONFIGS");
       return res
         .status(404)
         .json({ message: "No hay IA configurada para este negocio." });
@@ -32,6 +34,9 @@ exports.makeSmartCall = async (req, res) => {
 
     const availableMinutes = config.availableMinutes || 0;
     if (availableMinutes <= 0) {
+      console.log(
+        `>>> Llamadas bloqueadas: ${availableMinutes} minutos disponibles.`,
+      );
       return res.status(403).json({
         success: false,
         message:
@@ -48,9 +53,11 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    const customersToCall = customers || [];
+    console.log(
+      `>>> Clientes encontrados con call_active=true: ${customers?.length || 0}`,
+    );
 
-    if (customersToCall.length === 0) {
+    if (!customers || customers.length === 0) {
       return res
         .status(404)
         .json({ message: "No hay clientes activos para llamar." });
@@ -66,15 +73,16 @@ exports.makeSmartCall = async (req, res) => {
     else if (colombiaHour >= 18 || colombiaHour < 5)
       tempGreeting = "Buenas noches";
 
-    const calls = customersToCall.map(async (customer) => {
+    const calls = customers.map(async (customer) => {
       try {
         let rawPhone = customer.phone.toString().replace(/\s+/g, "");
         let formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
 
-        const customInstructions =
-          config.systemPrompt || `Eres un asesor experto de "${company}".`;
+        console.log(
+          `>>> Intentando llamar a: ${customer.fullName} (${formattedPhone})`,
+        );
 
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
@@ -109,11 +117,11 @@ exports.makeSmartCall = async (req, res) => {
                 messages: [
                   {
                     role: "system",
-                    content: `${customInstructions}
+                    content: `${config.systemPrompt || `Eres un asesor experto de "${company}".`}
 
                     DYNAMIC CONTEXT:
                     - Customer: ${customer.fullName}. 
-                    - Customer ID: ${customer.id || customer.phone}.
+                    - Customer ID: ${customer.clientId}.
                     - Starts with: "${tempGreeting} ${customer.fullName}".
                     - Company: ${company}.
 
@@ -171,23 +179,37 @@ exports.makeSmartCall = async (req, res) => {
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             metadata: {
-              tenantId,
-              company,
+              tenantId: tenantId,
+              company: company,
               clientId: customer.clientId,
               email: email || "sin-email",
             },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
+
+        console.log(
+          `>>> Llamada exitosa para ${customer.fullName}:`,
+          response.data.id,
+        );
         return response.data;
       } catch (err) {
-        return { error: true, customer: customer.fullName };
+        console.error(
+          `ERR: Falló la llamada para ${customer.fullName}:`,
+          err.response?.data || err.message,
+        );
+        return {
+          error: true,
+          customer: customer.fullName,
+          details: err.response?.data,
+        };
       }
     });
 
     const results = await Promise.all(calls);
     res.status(200).json({ success: true, results });
   } catch (e) {
+    console.error(">>> ERROR CRÍTICO en makeSmartCall:", e.message);
     res.status(500).json({ error: e.message });
   }
 };

@@ -55,7 +55,9 @@ exports.saveClient = async (req, res) => {
       company,
       tenantId,
       clientId,
+      status,
     } = req.body;
+
     if (!tenantId)
       return res.status(400).json({ error: "El tenantId es obligatorio" });
 
@@ -68,6 +70,7 @@ exports.saveClient = async (req, res) => {
       identification: (identification || "N/A").trim(),
       city: (city || "N/A").trim(),
       call_active: call_active !== undefined ? call_active : true,
+      status: status || "NUEVO",
       updatedAt: new Date().toISOString(),
       createdAt: createdAt || new Date().toISOString(),
     };
@@ -83,8 +86,15 @@ exports.saveClient = async (req, res) => {
 
 exports.updateBasicInfo = async (req, res) => {
   try {
-    const { tenantId, clientId, fullName, phone, email, identification } =
-      req.body;
+    const {
+      tenantId,
+      clientId,
+      fullName,
+      phone,
+      email,
+      identification,
+      status,
+    } = req.body;
     if (!tenantId || !clientId)
       return res
         .status(400)
@@ -94,12 +104,14 @@ exports.updateBasicInfo = async (req, res) => {
       TableName: TABLE_CLIENTS,
       Key: { tenantId: tenantId.trim(), clientId: clientId.trim() },
       UpdateExpression:
-        "set fullName = :n, phone = :p, email = :e, identification = :i, updatedAt = :u",
+        "set fullName = :n, phone = :p, email = :e, identification = :i, #st = :s, updatedAt = :u",
+      ExpressionAttributeNames: { "#st": "status" }, // 'status' es palabra reservada en Dynamo
       ExpressionAttributeValues: {
         ":n": (fullName || "N/A").trim(),
         ":p": Number(phone),
         ":e": (email || "N/A").trim(),
         ":i": (identification || "N/A").trim(),
+        ":s": status || "NUEVO",
         ":u": new Date().toISOString(),
       },
       ReturnValues: "ALL_NEW",
