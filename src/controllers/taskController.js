@@ -91,13 +91,15 @@ exports.handleRileyTool = async (req, res) => {
       typeof toolCall.function.arguments === "string"
         ? JSON.parse(toolCall.function.arguments)
         : toolCall.function.arguments;
-    const { titulo, detalle, company, tenantId } = args;
+    const { titulo, detalle, company, tenantId, clientId, customerName } = args;
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_TASKS,
         Item: {
           taskId: Date.now(),
           tenantId: tenantId,
+          clientId: clientId,
+          customerName: customerName,
           company: company,
           title: titulo || "Nueva Tarea",
           description: detalle || "Sin detalles",
@@ -125,22 +127,34 @@ exports.handleVapiWebhook = async (req, res) => {
   if (payload.type !== "end-of-call-report")
     return res.status(200).json({ message: "Ignorado" });
   try {
-    const { call, summary } = payload;
+    const { call, summary, analysis } = payload;
     const tenantId = call?.metadata?.tenantId;
     const company = call?.metadata?.company;
     const userEmail = call?.metadata?.email;
+    const clientId = call?.metadata?.clientId;
+    const customerName = call?.customer?.name || "Cliente";
+
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
     const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
     const minutesToSubtract = Math.round(rawDuration / 60);
+
+    const negotiationStatus =
+      analysis?.structuredData?.status ||
+      (wasAnswered ? "INTERESTED" : "NO_ANSWER");
+    const progress =
+      analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
+
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
         Item: {
           id: String(call?.id || Date.now()),
           tenantId,
+          clientId,
+          customerName,
           company,
           phone: call?.customer?.number || "N/A",
           duration: formatDuration(rawDuration),
@@ -150,6 +164,8 @@ exports.handleVapiWebhook = async (req, res) => {
             ? summary || "Llamada finalizada"
             : "Llamada no contestada",
           answered: !!wasAnswered,
+          status: negotiationStatus,
+          progress: progress,
         },
       }),
     );
@@ -177,12 +193,16 @@ exports.handleVapiWebhook = async (req, res) => {
           Item: {
             taskId: Date.now(),
             tenantId,
+            clientId,
+            customerName,
             company,
-            title: `📞 Llamada: ${call?.customer?.name || "Cliente"}`,
+            title: `📞 Llamada: ${customerName}`,
             description: summary,
             isCompleted: false,
             createdAt: new Date().toISOString(),
             source: "Vapi Webhook",
+            status: negotiationStatus,
+            progress: progress,
           },
         }),
       );

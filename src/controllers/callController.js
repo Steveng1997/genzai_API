@@ -1,4 +1,4 @@
-const { GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const { GetCommand, ScanCommand: ScanCalls } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 const axios = require("axios");
 
@@ -40,36 +40,35 @@ exports.makeSmartCall = async (req, res) => {
       });
     }
 
-    const { Items: clientes } = await dynamoDB.send(
-      new ScanCommand({
+    const { Items: customers } = await dynamoDB.send(
+      new ScanCalls({
         TableName: TABLE_CLIENTS,
         FilterExpression: "tenantId = :t AND call_active = :a",
         ExpressionAttributeValues: { ":t": tenantId, ":a": true },
       }),
     );
 
-    const clientesParaLlamar = clientes || [];
+    const customersToCall = customers || [];
 
-    if (clientesParaLlamar.length === 0) {
+    if (customersToCall.length === 0) {
       return res
         .status(404)
         .json({ message: "No hay clientes activos para llamar." });
     }
 
-    const ahora = new Date();
-    const horaColombia = new Date(
-      ahora.toLocaleString("en-US", { timeZone: "America/Bogota" }),
+    const now = new Date();
+    const colombiaHour = new Date(
+      now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
     ).getHours();
 
-    let saludoTemporal = "Buenos días";
-    if (horaColombia >= 12 && horaColombia < 18)
-      saludoTemporal = "Buenas tardes";
-    else if (horaColombia >= 18 || horaColombia < 5)
-      saludoTemporal = "Buenas noches";
+    let tempGreeting = "Buenos días";
+    if (colombiaHour >= 12 && colombiaHour < 18) tempGreeting = "Buenas tardes";
+    else if (colombiaHour >= 18 || colombiaHour < 5)
+      tempGreeting = "Buenas noches";
 
-    const calls = clientesParaLlamar.map(async (cliente) => {
+    const calls = customersToCall.map(async (customer) => {
       try {
-        let rawPhone = cliente.phone.toString().replace(/\s+/g, "");
+        let rawPhone = customer.phone.toString().replace(/\s+/g, "");
         let formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
@@ -80,10 +79,29 @@ exports.makeSmartCall = async (req, res) => {
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
-            customer: { number: formattedPhone, name: cliente.fullName },
+            customer: { number: formattedPhone, name: customer.fullName },
             assistantId: config.assistantId,
             serverUrl:
               "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
+            analysisSchema: {
+              type: "object",
+              properties: {
+                status: {
+                  type: "string",
+                  enum: [
+                    "NO_ANSWER",
+                    "INTERESTED",
+                    "INFO_SENT",
+                    "APPOINTMENT_SET",
+                    "DOCUMENTATION",
+                    "RESERVATION",
+                    "CREDIT_PENDING",
+                    "CLOSED_DEAL",
+                  ],
+                },
+                progress: { type: "number" },
+              },
+            },
             assistantOverrides: {
               model: {
                 provider: "openai",
@@ -93,22 +111,23 @@ exports.makeSmartCall = async (req, res) => {
                     role: "system",
                     content: `${customInstructions}
 
-                    CONTEXTO DINÁMICO:
-                    - Cliente: ${cliente.fullName}. 
-                    - Inicia con: "${saludoTemporal} ${cliente.fullName}".
-                    - Empresa: ${company}.
+                    DYNAMIC CONTEXT:
+                    - Customer: ${customer.fullName}. 
+                    - Customer ID: ${customer.id || customer.phone}.
+                    - Starts with: "${tempGreeting} ${customer.fullName}".
+                    - Company: ${company}.
 
-                    REGLAS:
-                    1. Usa PROTOCOLO DE CITA si piden agendar.
-                    2. No inventes datos.
-                    3. No cuelgues hasta que se despidan.
+                    PROGRESS STATUS RULES:
+                    - NO_ANSWER: 0
+                    - INTERESTED: 10
+                    - INFO_SENT: 30
+                    - APPOINTMENT_SET: 50
+                    - DOCUMENTATION: 70
+                    - RESERVATION: 80
+                    - CREDIT_PENDING: 90
+                    - CLOSED_DEAL: 100
 
-                    PROTOCOLO DE CITA:
-                    - Pide fecha y hora, luego usa 'create_task'.
-
-                    DATOS TAREA:
-                    - titulo: Cita - ${cliente.fullName}
-                    - tenantId: ${tenantId}`,
+                    If they want to schedule, use 'create_task'.`,
                   },
                 ],
                 tools: [
@@ -129,8 +148,16 @@ exports.makeSmartCall = async (req, res) => {
                           titulo: { type: "string" },
                           detalle: { type: "string" },
                           tenantId: { type: "string" },
+                          clientId: { type: "string" },
+                          customerName: { type: "string" },
                         },
-                        required: ["titulo", "detalle", "tenantId"],
+                        required: [
+                          "titulo",
+                          "detalle",
+                          "tenantId",
+                          "clientId",
+                          "customerName",
+                        ],
                       },
                     },
                     server: {
@@ -143,13 +170,18 @@ exports.makeSmartCall = async (req, res) => {
             phoneNumberId:
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-            metadata: { tenantId, company, email: email || "sin-email" },
+            metadata: {
+              tenantId,
+              company,
+              clientId: customer.clientId,
+              email: email || "sin-email",
+            },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
         return response.data;
       } catch (err) {
-        return { error: true, client: cliente.fullName };
+        return { error: true, customer: customer.fullName };
       }
     });
 
