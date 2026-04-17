@@ -74,27 +74,22 @@ exports.confirmPayment = async (req, res) => {
       }),
     );
 
-    const defaultGoals = ["DINERO", "CANTIDAD"];
-    await Promise.all(
-      defaultGoals.map((goalType) => {
-        const goalEndDate = new Date();
-        goalEndDate.setDate(now.getDate() + 30);
+    const goalEndDate = new Date();
+    goalEndDate.setDate(now.getDate() + 30);
 
-        return dynamoDB.send(
-          new PutCommand({
-            TableName: process.env.DYNAMODB_TABLE_GOALS,
-            Item: {
-              tenantId: tenantId,
-              goalId: crypto.randomUUID(),
-              type: goalType,
-              targetValue: 0,
-              currentValue: 0,
-              days: 30,
-              endDate: goalEndDate.toISOString(),
-              updatedAt: now.toISOString(),
-            },
-          }),
-        );
+    await dynamoDB.send(
+      new PutCommand({
+        TableName: process.env.DYNAMODB_TABLE_GOALS,
+        Item: {
+          tenantId: tenantId,
+          goalId: crypto.randomUUID(),
+          nameGoals: "DINERO",
+          targetValue: 0,
+          currentValue: 0,
+          days: 30,
+          endDate: goalEndDate.toISOString(),
+          updatedAt: now.toISOString(),
+        },
       }),
     );
 
