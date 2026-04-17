@@ -1,6 +1,5 @@
 const OpenAI = require("openai");
 const {
-  PutCommand,
   UpdateCommand,
   GetCommand,
   ScanCommand,
@@ -60,6 +59,11 @@ exports.setupAssistant = async (req, res) => {
     tenantId = (tenantId || "").trim();
 
     if (!tenantId) {
+      if (files.length > 0) {
+        files.forEach((f) => {
+          if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+        });
+      }
       return res.status(400).json({ message: "Falta el tenantId." });
     }
 
@@ -70,7 +74,6 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
-    // 1. Subir archivos a OpenAI
     const fileIds = [];
     for (const file of files) {
       const uploadResponse = await openai.files.create({
@@ -80,7 +83,6 @@ exports.setupAssistant = async (req, res) => {
       fileIds.push(uploadResponse.id);
     }
 
-    // 2. Crear/Obtener Asistente de OpenAI
     let openaiId = Item?.openaiAssistantId;
     if (!openaiId) {
       const payments = await dynamoDB.send(
@@ -107,7 +109,7 @@ exports.setupAssistant = async (req, res) => {
               parameters: {
                 type: "object",
                 properties: {
-                  titulo: { type: "string", description: "Resumen corto" },
+                  titulo: { type: "string" },
                   detalle: {
                     type: "string",
                     description: "Explicación detallada",
@@ -124,7 +126,6 @@ exports.setupAssistant = async (req, res) => {
       openaiId = assistant.id;
     }
 
-    // 3. Vincular Vector Store si hay archivos
     if (fileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
@@ -135,8 +136,6 @@ exports.setupAssistant = async (req, res) => {
       });
     }
 
-    // 4. GUARDADO MAESTRO EN DYNAMODB
-    // Guardamos los IDs de Vapi y el tenantId explícito
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -152,11 +151,11 @@ exports.setupAssistant = async (req, res) => {
           tenantId = :t`,
         ExpressionAttributeValues: {
           ":oa": openaiId,
-          ":va": vapiAssistantId || "4c266662-68db-4046-a13f-8c021c84919c", // Riley New ID
-          ":vpi": "59d1cef7-80b8-4dfa-9a14-1394df3bc97a", // Vapi Phone ID
+          ":va": vapiAssistantId || "4c266662-68db-4046-a13f-8c021c84919c",
+          ":vpi": "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
           ":f": fileIds,
           ":u": new Date().toISOString(),
-          ":c": company,
+          ":c": company || "",
           ":e": (email || "").toLowerCase(),
           ":t": tenantId,
           ":empty_list": [],
