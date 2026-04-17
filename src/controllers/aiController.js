@@ -28,11 +28,13 @@ exports.updatePrompt = async (req, res) => {
         Key: { businessId: tenantId },
       }),
     );
+
     let currentPrompt = Item?.systemPrompt || "";
     let newFullPrompt =
       currentPrompt === ""
         ? `- ${systemPrompt}`
         : `${currentPrompt}\n- ${systemPrompt}`;
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -41,6 +43,7 @@ exports.updatePrompt = async (req, res) => {
         ExpressionAttributeValues: { ":p": newFullPrompt },
       }),
     );
+
     res
       .status(200)
       .json({ success: true, message: "Instrucciones acumuladas." });
@@ -80,6 +83,27 @@ exports.setupAssistant = async (req, res) => {
 
     let openaiId = Item?.openaiAssistantId;
 
+    const assistantTools = [
+      { type: "file_search" },
+      {
+        type: "function",
+        function: {
+          name: "create_task",
+          description: "Registra compromiso.",
+          parameters: {
+            type: "object",
+            properties: {
+              titulo: { type: "string" },
+              detalle: { type: "string" },
+              company: { type: "string", enum: [company] },
+              tenantId: { type: "string", enum: [tenantId] },
+            },
+            required: ["titulo", "tenantId", "company"],
+          },
+        },
+      },
+    ];
+
     if (!openaiId) {
       const payments = await dynamoDB.send(
         new ScanCommand({
@@ -95,62 +119,32 @@ exports.setupAssistant = async (req, res) => {
         name: `Riley - ${company}`,
         instructions: `Eres Riley de "${company}". Info: ${productDescription}.`,
         model: "gpt-4o",
-        tools: [
-          { type: "file_search" },
-          {
-            type: "function",
-            function: {
-              name: "create_task",
-              description: "Registra compromiso.",
-              parameters: {
-                type: "object",
-                properties: {
-                  titulo: { type: "string" },
-                  detalle: { type: "string" },
-                  company: { type: "string", enum: [company] },
-                  tenantId: { type: "string", enum: [tenantId] },
-                },
-                required: ["titulo", "tenantId", "company"],
-              },
-            },
-          },
-        ],
+        tools: assistantTools,
       });
       openaiId = assistant.id;
     } else {
       await openai.beta.assistants.update(openaiId, {
         name: `Riley - ${company}`,
-        tools: [
-          { type: "file_search" },
-          {
-            type: "function",
-            function: {
-              name: "create_task",
-              description: "Registra compromiso.",
-              parameters: {
-                type: "object",
-                properties: {
-                  titulo: { type: "string" },
-                  detalle: { type: "string" },
-                  company: { type: "string", enum: [company] },
-                  tenantId: { type: "string", enum: [tenantId] },
-                },
-                required: ["titulo", "tenantId", "company"],
-              },
-            },
-          },
-        ],
+        tools: assistantTools,
       });
     }
 
     if (fileIds.length > 0) {
-      const vectorStore = await openai.beta.vectorStores.create({
-        name: `Store-${tenantId}-${Date.now()}`,
-        file_ids: fileIds,
-      });
-      await openai.beta.assistants.update(openaiId, {
-        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
-      });
+      if (openai.beta && openai.beta.vectorStores) {
+        const vectorStore = await openai.beta.vectorStores.create({
+          name: `Store-${tenantId}-${Date.now()}`,
+          file_ids: fileIds,
+        });
+        await openai.beta.assistants.update(openaiId, {
+          tool_resources: {
+            file_search: { vector_store_ids: [vectorStore.id] },
+          },
+        });
+      } else {
+        console.warn(
+          "ADVERTENCIA: vectorStores no disponible. Los archivos se subieron pero no se vincularon.",
+        );
+      }
     }
 
     await dynamoDB.send(
@@ -180,13 +174,11 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Riley configurada correctamente.",
-        openaiId,
-      });
+    res.status(200).json({
+      success: true,
+      message: "Riley configurada correctamente.",
+      openaiId,
+    });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {
