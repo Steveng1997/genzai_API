@@ -16,13 +16,11 @@ const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 
 exports.updatePrompt = async (req, res) => {
   const { tenantId, systemPrompt } = req.body;
-
   if (!tenantId || systemPrompt === undefined) {
     return res
       .status(400)
       .json({ message: "tenantId y systemPrompt son requeridos." });
   }
-
   try {
     const { Item } = await dynamoDB.send(
       new GetCommand({
@@ -30,13 +28,11 @@ exports.updatePrompt = async (req, res) => {
         Key: { businessId: tenantId },
       }),
     );
-
     let currentPrompt = Item?.systemPrompt || "";
     let newFullPrompt =
       currentPrompt === ""
         ? `- ${systemPrompt}`
         : `${currentPrompt}\n- ${systemPrompt}`;
-
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -45,11 +41,9 @@ exports.updatePrompt = async (req, res) => {
         ExpressionAttributeValues: { ":p": newFullPrompt },
       }),
     );
-
-    res.status(200).json({
-      success: true,
-      message: "Instrucciones acumuladas.",
-    });
+    res
+      .status(200)
+      .json({ success: true, message: "Instrucciones acumuladas." });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -62,11 +56,9 @@ exports.setupAssistant = async (req, res) => {
     tenantId = (tenantId || "").trim();
 
     if (!tenantId) {
-      if (files.length > 0) {
-        files.forEach((f) => {
-          if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-        });
-      }
+      files.forEach((f) => {
+        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+      });
       return res.status(400).json({ message: "Falta el tenantId." });
     }
 
@@ -78,14 +70,12 @@ exports.setupAssistant = async (req, res) => {
     );
 
     const fileIds = [];
-    if (openai.files) {
-      for (const file of files) {
-        const uploadResponse = await openai.files.create({
-          file: fs.createReadStream(file.path),
-          purpose: "assistants",
-        });
-        fileIds.push(uploadResponse.id);
-      }
+    for (const file of files) {
+      const uploadResponse = await openai.files.create({
+        file: fs.createReadStream(file.path),
+        purpose: "assistants",
+      });
+      fileIds.push(uploadResponse.id);
     }
 
     let openaiId = Item?.openaiAssistantId;
@@ -130,6 +120,26 @@ exports.setupAssistant = async (req, res) => {
     } else {
       await openai.beta.assistants.update(openaiId, {
         name: `Riley - ${company}`,
+        tools: [
+          { type: "file_search" },
+          {
+            type: "function",
+            function: {
+              name: "create_task",
+              description: "Registra compromiso.",
+              parameters: {
+                type: "object",
+                properties: {
+                  titulo: { type: "string" },
+                  detalle: { type: "string" },
+                  company: { type: "string", enum: [company] },
+                  tenantId: { type: "string", enum: [tenantId] },
+                },
+                required: ["titulo", "tenantId", "company"],
+              },
+            },
+          },
+        ],
       });
     }
 
@@ -170,11 +180,13 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
-    res.status(200).json({
-      success: true,
-      message: "Riley configurada correctamente.",
-      openaiId: openaiId,
-    });
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Riley configurada correctamente.",
+        openaiId,
+      });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {
