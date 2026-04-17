@@ -126,6 +126,7 @@ exports.handleVapiWebhook = async (req, res) => {
   const payload = req.body.message || req.body;
   if (payload.type !== "end-of-call-report")
     return res.status(200).json({ message: "Ignorado" });
+
   try {
     const { call, summary, analysis } = payload;
     const tenantId = call?.metadata?.tenantId;
@@ -138,9 +139,29 @@ exports.handleVapiWebhook = async (req, res) => {
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
-    const wasAnswered = rawDuration > 0 || (summary && summary.length > 5);
-    const minutesToSubtract = Math.round(rawDuration / 60);
 
+    const endedReason = call?.endedReason || "";
+
+    // LISTA NEGRA DE MOTIVOS: Si la llamada terminó por estas razones, no fue contestada
+    const failureReasons = [
+      "voicemail",
+      "no-answer",
+      "busy",
+      "failed",
+      "customer-hung-up-erearly", // Si cuelgan antes de que la IA hable
+      "declined",
+    ];
+
+    // LÓGICA DE ANSWERED:
+    // False si el motivo está en la lista negra O si el estado es NO_ANSWER
+    // True solo si el motivo no es de fallo y hubo una duración mínima
+    let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
+
+    if (analysis?.structuredData?.status === "NO_ANSWER") {
+      wasAnswered = false;
+    }
+
+    const minutesToSubtract = Math.round(rawDuration / 60);
     const negotiationStatus =
       analysis?.structuredData?.status ||
       (wasAnswered ? "INTERESTED" : "NO_ANSWER");
@@ -162,13 +183,14 @@ exports.handleVapiWebhook = async (req, res) => {
           timestamp: new Date().toISOString(),
           summary: wasAnswered
             ? summary || "Llamada finalizada"
-            : "Llamada no contestada",
-          answered: !!wasAnswered,
-          status: negotiationStatus,
-          progress: progress,
+            : `No contestada: ${endedReason}`,
+          answered: wasAnswered,
+          status: wasAnswered ? negotiationStatus : "NO_ANSWER",
+          progress: wasAnswered ? progress : 0,
         },
       }),
     );
+
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
@@ -186,6 +208,7 @@ exports.handleVapiWebhook = async (req, res) => {
         );
       }
     }
+
     if (wasAnswered && summary) {
       await dynamoDB.send(
         new PutCommand({
