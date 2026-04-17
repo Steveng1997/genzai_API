@@ -104,9 +104,9 @@ exports.confirmPayment = async (req, res) => {
 };
 
 exports.upsertGoal = async (req, res) => {
-  const { tenantId, goalId, type, targetValue, days, oldType } = req.body;
+  const { tenantId, goalId, nameGoals, targetValue, days } = req.body;
 
-  if (!tenantId || !type || targetValue === undefined) {
+  if (!tenantId || !nameGoals || targetValue === undefined) {
     return res.status(400).json({ success: false, message: "Missing fields" });
   }
 
@@ -116,15 +116,11 @@ exports.upsertGoal = async (req, res) => {
     const goalEndDate = new Date();
     goalEndDate.setDate(now.getDate() + numDays);
 
-    const typeUpper = type.toUpperCase().trim();
+    const nameUpper = nameGoals.toUpperCase().trim();
     let finalGoalId =
       goalId && goalId !== "null" && goalId !== "" ? goalId : null;
 
     if (!finalGoalId) {
-      const searchType = (oldType && oldType !== "" ? oldType : type)
-        .toUpperCase()
-        .trim();
-
       const existing = await dynamoDB.send(
         new QueryCommand({
           TableName: process.env.DYNAMODB_TABLE_GOALS,
@@ -134,12 +130,7 @@ exports.upsertGoal = async (req, res) => {
       );
 
       if (existing.Items && existing.Items.length > 0) {
-        const matchedGoal = existing.Items.find(
-          (item) => item.type.toUpperCase().trim() === searchType,
-        );
-        if (matchedGoal) {
-          finalGoalId = matchedGoal.goalId;
-        }
+        finalGoalId = existing.Items[0].goalId;
       }
     }
 
@@ -158,10 +149,10 @@ exports.upsertGoal = async (req, res) => {
           goalId: finalGoalId,
         },
         UpdateExpression:
-          "SET #tp = :type, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
-        ExpressionAttributeNames: { "#tp": "type", "#d": "days" },
+          "SET nameGoals = :ng, targetValue = :tv, #d = :days, endDate = :ed, updatedAt = :ua",
+        ExpressionAttributeNames: { "#d": "days" },
         ExpressionAttributeValues: {
-          ":type": typeUpper,
+          ":ng": nameUpper,
           ":tv": Number(targetValue),
           ":days": numDays,
           ":ed": goalEndDate.toISOString(),
