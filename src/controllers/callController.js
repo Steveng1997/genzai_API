@@ -43,8 +43,10 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    if (!config) {
-      return res.status(404).json({ message: "No hay IA configurada." });
+    if (!config || !config.assistantId) {
+      return res
+        .status(404)
+        .json({ message: "No hay IA configurada o falta assistantId." });
     }
 
     const { Items: customers } = await dynamoDB.send(
@@ -79,8 +81,14 @@ exports.makeSmartCall = async (req, res) => {
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
-            customer: { number: formattedPhone, name: customer.fullName },
-            assistantId: config.assistantId,
+            customer: {
+              number: formattedPhone,
+              name: customer.fullName,
+            },
+            assistantId: config.assistantId, // Mantenlo aquí en la raíz
+            phoneNumberId:
+              config.vapiPhoneNumberId ||
+              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             assistantOverrides: {
               serverUrl:
                 "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
@@ -169,14 +177,10 @@ exports.makeSmartCall = async (req, res) => {
                 ],
               },
             },
-            phoneNumberId:
-              config.vapiPhoneNumberId ||
-              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             metadata: {
               tenantId: tenantId,
               company: company,
               clientId: customer.clientId,
-              email: email || "sin-email",
             },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
@@ -188,11 +192,7 @@ exports.makeSmartCall = async (req, res) => {
           `ERR: Falló la llamada para ${customer.fullName}:`,
           err.response?.data || err.message,
         );
-        return {
-          error: true,
-          customer: customer.fullName,
-          details: err.response?.data,
-        };
+        return { error: true, details: err.response?.data };
       }
     });
 
