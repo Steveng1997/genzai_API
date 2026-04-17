@@ -29,13 +29,9 @@ exports.makeSmartCall = async (req, res) => {
     const availableMinutes = userDoc?.availableMinutes || 0;
 
     if (availableMinutes <= 0) {
-      console.log(
-        `>>> Llamadas bloqueadas: ${availableMinutes} minutos disponibles.`,
-      );
       return res.status(403).json({
         success: false,
-        message:
-          "No tienes minutos disponibles para realizar llamadas. Por favor, recarga tu saldo.",
+        message: "No tienes minutos disponibles.",
         minutes: availableMinutes,
       });
     }
@@ -48,10 +44,7 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config) {
-      console.log("ERR: No se encontró configuración en TABLE_CONFIGS");
-      return res
-        .status(404)
-        .json({ message: "No hay IA configurada para este negocio." });
+      return res.status(404).json({ message: "No hay IA configurada." });
     }
 
     const { Items: customers } = await dynamoDB.send(
@@ -62,14 +55,8 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    console.log(
-      `>>> Clientes encontrados con call_active=true: ${customers?.length || 0}`,
-    );
-
     if (!customers || customers.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No hay clientes activos para llamar." });
+      return res.status(404).json({ message: "No hay clientes activos." });
     }
 
     const now = new Date();
@@ -89,37 +76,35 @@ exports.makeSmartCall = async (req, res) => {
           ? rawPhone
           : `+57${rawPhone}`;
 
-        console.log(
-          `>>> Intentando llamar a: ${customer.fullName} (${formattedPhone})`,
-        );
-
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           {
             customer: { number: formattedPhone, name: customer.fullName },
             assistantId: config.assistantId,
-            serverUrl:
-              "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
-            analysisSchema: {
-              type: "object",
-              properties: {
-                status: {
-                  type: "string",
-                  enum: [
-                    "NO_ANSWER",
-                    "INTERESTED",
-                    "INFO_SENT",
-                    "APPOINTMENT_SET",
-                    "DOCUMENTATION",
-                    "RESERVATION",
-                    "CREDIT_PENDING",
-                    "CLOSED_DEAL",
-                  ],
-                },
-                progress: { type: "number" },
-              },
-            },
             assistantOverrides: {
+              serverUrl:
+                "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
+              analysisPlan: {
+                structuredDataSchema: {
+                  type: "object",
+                  properties: {
+                    status: {
+                      type: "string",
+                      enum: [
+                        "NO_ANSWER",
+                        "INTERESTED",
+                        "INFO_SENT",
+                        "APPOINTMENT_SET",
+                        "DOCUMENTATION",
+                        "RESERVATION",
+                        "CREDIT_PENDING",
+                        "CLOSED_DEAL",
+                      ],
+                    },
+                    progress: { type: "number" },
+                  },
+                },
+              },
               model: {
                 provider: "openai",
                 model: "gpt-4o",
@@ -197,10 +182,6 @@ exports.makeSmartCall = async (req, res) => {
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
 
-        console.log(
-          `>>> Llamada exitosa para ${customer.fullName}:`,
-          response.data.id,
-        );
         return response.data;
       } catch (err) {
         console.error(
@@ -218,7 +199,6 @@ exports.makeSmartCall = async (req, res) => {
     const results = await Promise.all(calls);
     res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error(">>> ERROR CRÍTICO en makeSmartCall:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
