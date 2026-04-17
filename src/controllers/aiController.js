@@ -46,7 +46,7 @@ exports.updatePrompt = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Instrucciones acumuladas correctamente.",
+      message: "Instrucciones acumuladas.",
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -56,13 +56,11 @@ exports.updatePrompt = async (req, res) => {
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   try {
-    let { email, company, tenantId } = req.body;
+    let { email, company, tenantId, vapiAssistantId } = req.body;
     tenantId = (tenantId || "").trim();
 
     if (!tenantId) {
-      return res
-        .status(400)
-        .json({ message: "Falta el identificador de instancia (tenantId)." });
+      return res.status(400).json({ message: "Falta el tenantId." });
     }
 
     const { Item } = await dynamoDB.send(
@@ -72,6 +70,7 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
+    // 1. Subir archivos a OpenAI
     const fileIds = [];
     for (const file of files) {
       const uploadResponse = await openai.files.create({
@@ -81,25 +80,22 @@ exports.setupAssistant = async (req, res) => {
       fileIds.push(uploadResponse.id);
     }
 
-    let assistantId = Item?.openaiAssistantId;
-
-    if (!assistantId) {
-      const paymentsResponse = await dynamoDB.send(
+    // 2. Crear/Obtener Asistente de OpenAI
+    let openaiId = Item?.openaiAssistantId;
+    if (!openaiId) {
+      const payments = await dynamoDB.send(
         new ScanCommand({
           TableName: TABLE_PAYMENTS,
           FilterExpression: "tenantId = :t",
           ExpressionAttributeValues: { ":t": tenantId },
         }),
       );
-
-      const businessData = paymentsResponse.Items && paymentsResponse.Items[0];
-      const productDescription = businessData
-        ? businessData.sellingProduct
-        : "productos generales";
+      const productDescription =
+        payments.Items?.[0]?.sellingProduct || "productos generales";
 
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company}`,
-        instructions: `Eres Riley, el asistente virtual de "${company}". Info: ${productDescription}. Usa 'create_task' para citas. tenantId: ${tenantId}.`,
+        instructions: `Eres Riley de "${company}". Info: ${productDescription}.`,
         model: "gpt-4o",
         tools: [
           { type: "file_search" },
@@ -125,32 +121,43 @@ exports.setupAssistant = async (req, res) => {
           },
         ],
       });
-      assistantId = assistant.id;
+      openaiId = assistant.id;
     }
 
+    // 3. Vincular Vector Store si hay archivos
     if (fileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
         file_ids: fileIds,
       });
-
-      await openai.beta.assistants.update(assistantId, {
+      await openai.beta.assistants.update(openaiId, {
         tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
     }
 
+    // 4. GUARDADO MAESTRO EN DYNAMODB
+    // Guardamos los IDs de Vapi y el tenantId explícito
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression:
-          "SET openaiAssistantId = :a, openaiFileIds = list_append(if_not_exists(openaiFileIds, :empty_list), :f), updatedAt = :u, company = :c, ownerEmail = :e, tenantId = :t",
+        UpdateExpression: `SET 
+          openaiAssistantId = :oa, 
+          assistantId = :va, 
+          vapiPhoneNumberId = :vpi,
+          openaiFileIds = list_append(if_not_exists(openaiFileIds, :empty_list), :f), 
+          updatedAt = :u, 
+          company = :c, 
+          ownerEmail = :e, 
+          tenantId = :t`,
         ExpressionAttributeValues: {
-          ":a": assistantId,
+          ":oa": openaiId,
+          ":va": vapiAssistantId || "4c266662-68db-4046-a13f-8c021c84919c", // Riley New ID
+          ":vpi": "59d1cef7-80b8-4dfa-9a14-1394df3bc97a", // Vapi Phone ID
           ":f": fileIds,
           ":u": new Date().toISOString(),
           ":c": company,
-          ":e": email.toLowerCase(),
+          ":e": (email || "").toLowerCase(),
           ":t": tenantId,
           ":empty_list": [],
         },
@@ -159,7 +166,7 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Riley entrenada y actualizada para: ${tenantId}`,
+      message: "Riley configurada y IDs de Vapi vinculados.",
     });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });

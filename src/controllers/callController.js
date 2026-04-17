@@ -19,6 +19,7 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(400).json({ message: "El tenantId es requerido." });
     }
 
+    // 1. Verificar minutos del usuario
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -27,7 +28,6 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     const availableMinutes = userDoc?.availableMinutes || 0;
-
     if (availableMinutes <= 0) {
       return res.status(403).json({
         success: false,
@@ -36,6 +36,7 @@ exports.makeSmartCall = async (req, res) => {
       });
     }
 
+    // 2. Obtener configuración de la IA (Vapi Assistant ID)
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -43,12 +44,16 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
+    // IMPORTANTE: Buscamos 'assistantId' que es el que reconoce Vapi
     if (!config || !config.assistantId) {
       return res
         .status(404)
-        .json({ message: "No hay IA configurada o falta assistantId." });
+        .json({
+          message: "No hay IA configurada en Vapi o falta assistantId.",
+        });
     }
 
+    // 3. Obtener clientes activos
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -61,6 +66,7 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(404).json({ message: "No hay clientes activos." });
     }
 
+    // 4. Configurar saludo por hora (Colombia)
     const now = new Date();
     const colombiaHour = new Date(
       now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
@@ -71,6 +77,7 @@ exports.makeSmartCall = async (req, res) => {
     else if (colombiaHour >= 18 || colombiaHour < 5)
       tempGreeting = "Buenas noches";
 
+    // 5. Mapear y ejecutar llamadas a Vapi
     const calls = customers.map(async (customer) => {
       try {
         let rawPhone = customer.phone.toString().replace(/\s+/g, "");
@@ -85,14 +92,14 @@ exports.makeSmartCall = async (req, res) => {
               number: formattedPhone,
               name: customer.fullName,
             },
-            assistantId: config.assistantId, // Mantenlo aquí en la raíz
+            assistantId: config.assistantId, // ID de Vapi (4c266662...)
             phoneNumberId:
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             assistantOverrides: {
               serverUrl:
                 "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
-              analysisPlan: {
+                analysisPlan: {
                 structuredDataSchema: {
                   type: "object",
                   properties: {
@@ -189,10 +196,14 @@ exports.makeSmartCall = async (req, res) => {
         return response.data;
       } catch (err) {
         console.error(
-          `ERR: Falló la llamada para ${customer.fullName}:`,
+          `ERR: Falló llamada para ${customer.fullName}:`,
           err.response?.data || err.message,
         );
-        return { error: true, details: err.response?.data };
+        return {
+          error: true,
+          customer: customer.fullName,
+          details: err.response?.data,
+        };
       }
     });
 
