@@ -4,6 +4,7 @@ const axios = require("axios");
 
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS;
+const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
 exports.makeSmartCall = async (req, res) => {
   let { company, email, tenantId } = req.body;
@@ -18,6 +19,27 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(400).json({ message: "El tenantId es requerido." });
     }
 
+    const { Item: userDoc } = await dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_USERS,
+        Key: { email: email },
+      }),
+    );
+
+    const availableMinutes = userDoc?.availableMinutes || 0;
+
+    if (availableMinutes <= 0) {
+      console.log(
+        `>>> Llamadas bloqueadas: ${availableMinutes} minutos disponibles.`,
+      );
+      return res.status(403).json({
+        success: false,
+        message:
+          "No tienes minutos disponibles para realizar llamadas. Por favor, recarga tu saldo.",
+        minutes: availableMinutes,
+      });
+    }
+
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -30,19 +52,6 @@ exports.makeSmartCall = async (req, res) => {
       return res
         .status(404)
         .json({ message: "No hay IA configurada para este negocio." });
-    }
-
-    const availableMinutes = config.availableMinutes || 0;
-    if (availableMinutes <= 0) {
-      console.log(
-        `>>> Llamadas bloqueadas: ${availableMinutes} minutos disponibles.`,
-      );
-      return res.status(403).json({
-        success: false,
-        message:
-          "No tienes minutos disponibles para realizar llamadas. Por favor, recarga tu saldo.",
-        minutes: availableMinutes,
-      });
     }
 
     const { Items: customers } = await dynamoDB.send(
