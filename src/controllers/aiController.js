@@ -7,7 +7,10 @@ const {
 const dynamoDB = require("../services/dynamo");
 const fs = require("fs");
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
 const TABLE_PAYMENTS = process.env.DYNAMODB_TABLE_PAYMENTS;
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 
@@ -75,15 +78,18 @@ exports.setupAssistant = async (req, res) => {
     );
 
     const fileIds = [];
-    for (const file of files) {
-      const uploadResponse = await openai.files.create({
-        file: fs.createReadStream(file.path),
-        purpose: "assistants",
-      });
-      fileIds.push(uploadResponse.id);
+    if (openai.files) {
+      for (const file of files) {
+        const uploadResponse = await openai.files.create({
+          file: fs.createReadStream(file.path),
+          purpose: "assistants",
+        });
+        fileIds.push(uploadResponse.id);
+      }
     }
 
     let openaiId = Item?.openaiAssistantId;
+
     if (!openaiId) {
       const payments = await dynamoDB.send(
         new ScanCommand({
@@ -110,10 +116,7 @@ exports.setupAssistant = async (req, res) => {
                 type: "object",
                 properties: {
                   titulo: { type: "string" },
-                  detalle: {
-                    type: "string",
-                    description: "Explicación detallada",
-                  },
+                  detalle: { type: "string" },
                   company: { type: "string", enum: [company] },
                   tenantId: { type: "string", enum: [tenantId] },
                 },
@@ -124,11 +127,15 @@ exports.setupAssistant = async (req, res) => {
         ],
       });
       openaiId = assistant.id;
+    } else {
+      await openai.beta.assistants.update(openaiId, {
+        name: `Riley - ${company}`,
+      });
     }
 
     if (fileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
-        name: `Store-${tenantId}`,
+        name: `Store-${tenantId}-${Date.now()}`,
         file_ids: fileIds,
       });
       await openai.beta.assistants.update(openaiId, {
@@ -165,7 +172,8 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Riley configurada y IDs de Vapi vinculados.",
+      message: "Riley configurada correctamente.",
+      openaiId: openaiId,
     });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
