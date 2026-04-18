@@ -37,21 +37,25 @@ exports.updatePrompt = async (req, res) => {
       .json({ message: "tenantId y systemPrompt son requeridos." });
   }
   try {
+    const finalPrompt = Array.isArray(systemPrompt)
+      ? systemPrompt
+      : [systemPrompt.toString().trim()];
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression:
-          "SET systemPrompt = list_append(if_not_exists(systemPrompt, :empty_list), :p), updatedAt = :u",
+        UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
         ExpressionAttributeValues: {
-          ":p": [systemPrompt.trim()],
+          ":p": finalPrompt,
           ":u": new Date().toISOString(),
-          ":empty_list": [],
         },
       }),
     );
 
-    res.status(200).json({ success: true, message: "Instrucción agregada." });
+    res
+      .status(200)
+      .json({ success: true, message: "Instrucciones actualizadas." });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
