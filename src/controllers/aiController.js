@@ -30,7 +30,7 @@ exports.getConfig = async (req, res) => {
 };
 
 exports.updatePrompt = async (req, res) => {
-  const { tenantId, systemPrompt } = req.body;
+  const { tenantId, systemPrompt, company, email } = req.body;
   if (!tenantId || systemPrompt === undefined) {
     return res
       .status(400)
@@ -45,14 +45,17 @@ exports.updatePrompt = async (req, res) => {
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
+        UpdateExpression:
+          "SET systemPrompt = :p, updatedAt = :u, tenantId = :t, company = :c, ownerEmail = :e",
         ExpressionAttributeValues: {
           ":p": finalPrompt,
           ":u": new Date().toISOString(),
+          ":t": tenantId,
+          ":c": company || "",
+          ":e": (email || "").toLowerCase(),
         },
       }),
     );
-
     res
       .status(200)
       .json({ success: true, message: "Instrucciones actualizadas." });
@@ -66,7 +69,7 @@ exports.editPrompt = async (req, res) => {
   if (!tenantId || !Array.isArray(systemPrompt)) {
     return res
       .status(400)
-      .json({ message: "tenantId y un array de systemPrompt son requeridos." });
+      .json({ message: "tenantId y un array son requeridos." });
   }
   try {
     await dynamoDB.send(
@@ -80,10 +83,7 @@ exports.editPrompt = async (req, res) => {
         },
       }),
     );
-    res.status(200).json({
-      success: true,
-      message: "Instrucciones sincronizadas correctamente.",
-    });
+    res.status(200).json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -91,17 +91,17 @@ exports.editPrompt = async (req, res) => {
 
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
+  let { email, company, tenantId, vapiAssistantId } = req.body;
+  tenantId = (tenantId || "").trim();
+
+  if (!tenantId) {
+    files.forEach((f) => {
+      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+    });
+    return res.status(400).json({ message: "Falta el tenantId." });
+  }
+
   try {
-    let { email, company, tenantId, vapiAssistantId } = req.body;
-    tenantId = (tenantId || "").trim();
-
-    if (!tenantId) {
-      files.forEach((f) => {
-        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-      });
-      return res.status(400).json({ message: "Falta el tenantId." });
-    }
-
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -148,12 +148,11 @@ exports.setupAssistant = async (req, res) => {
           ExpressionAttributeValues: { ":t": tenantId },
         }),
       );
-      const productDescription =
+      const productDesc =
         payments.Items?.[0]?.sellingProduct || "productos generales";
-
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company}`,
-        instructions: `Eres Riley de "${company}". Info: ${productDescription}.`,
+        instructions: `Eres Riley de "${company}". Info: ${productDesc}.`,
         model: "gpt-4o",
         tools: assistantTools,
       });
@@ -167,13 +166,11 @@ exports.setupAssistant = async (req, res) => {
 
     if (fileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
-        name: `Store-${tenantId}-${Date.now()}`,
+        name: `Store-${tenantId}`,
         file_ids: fileIds,
       });
       await openai.beta.assistants.update(openaiId, {
-        tool_resources: {
-          file_search: { vector_store_ids: [vectorStore.id] },
-        },
+        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
     }
 
@@ -196,21 +193,17 @@ exports.setupAssistant = async (req, res) => {
           ":vpi": "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
           ":f": fileIds,
           ":u": new Date().toISOString(),
-          ":c": company || "",
-          ":e": (email || "").toLowerCase(),
+          ":c": company || Item?.company || "",
+          ":e": (email || Item?.ownerEmail || "").toLowerCase(),
           ":t": tenantId,
           ":empty_list": [],
         },
       }),
     );
 
-    res.status(200).json({
-      success: true,
-      message: "Riley configurada correctamente.",
-      openaiId,
-    });
+    res.status(200).json({ success: true, openaiId });
   } catch (e) {
-    res.status(500).json({ message: "Error técnico", error: e.message });
+    res.status(500).json({ error: e.message });
   } finally {
     files.forEach((f) => {
       if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
