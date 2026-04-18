@@ -8,8 +8,6 @@ const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
 exports.makeSmartCall = async (req, res) => {
   let { company, email, tenantId } = req.body;
-  console.log(">>> Iniciando makeSmartCall para tenantId:", tenantId);
-
   company = (company || "").trim();
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
@@ -19,7 +17,6 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(400).json({ message: "El tenantId es requerido." });
     }
 
-    // 1. Verificar minutos del usuario
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -36,7 +33,6 @@ exports.makeSmartCall = async (req, res) => {
       });
     }
 
-    // 2. Obtener configuración de la IA (Vapi Assistant ID)
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -44,16 +40,12 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    // IMPORTANTE: Buscamos 'assistantId' que es el que reconoce Vapi
     if (!config || !config.assistantId) {
-      return res
-        .status(404)
-        .json({
-          message: "No hay IA configurada en Vapi o falta assistantId.",
-        });
+      return res.status(404).json({
+        message: "No hay IA configurada en Vapi o falta assistantId.",
+      });
     }
 
-    // 3. Obtener clientes activos
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -66,7 +58,6 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(404).json({ message: "No hay clientes activos." });
     }
 
-    // 4. Configurar saludo por hora (Colombia)
     const now = new Date();
     const colombiaHour = new Date(
       now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
@@ -77,7 +68,6 @@ exports.makeSmartCall = async (req, res) => {
     else if (colombiaHour >= 18 || colombiaHour < 5)
       tempGreeting = "Buenas noches";
 
-    // 5. Mapear y ejecutar llamadas a Vapi
     const calls = customers.map(async (customer) => {
       try {
         let rawPhone = customer.phone.toString().replace(/\s+/g, "");
@@ -92,14 +82,14 @@ exports.makeSmartCall = async (req, res) => {
               number: formattedPhone,
               name: customer.fullName,
             },
-            assistantId: config.assistantId, // ID de Vapi (4c266662...)
+            assistantId: config.assistantId,
             phoneNumberId:
               config.vapiPhoneNumberId ||
               "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
             assistantOverrides: {
               serverUrl:
                 "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
-                analysisPlan: {
+              analysisPlan: {
                 structuredDataSchema: {
                   type: "object",
                   properties: {
@@ -126,13 +116,13 @@ exports.makeSmartCall = async (req, res) => {
                 messages: [
                   {
                     role: "system",
-                    content: `${config.systemPrompt || `Eres un asesor experto de "${company}".`}
-
+                    content: `${config.systemPrompt || `Eres Riley, asesora experta de ${company}.`}
+                    
                     DYNAMIC CONTEXT:
-                    - Customer: ${customer.fullName}. 
-                    - Customer ID: ${customer.clientId}.
-                    - Starts with: "${tempGreeting} ${customer.fullName}".
-                    - Company: ${company}.
+                    - Customer: ${customer.fullName}
+                    - Customer ID: ${customer.clientId}
+                    - Company: ${company}
+                    - Greeting: "${tempGreeting} ${customer.fullName}"
 
                     PROGRESS STATUS RULES:
                     - NO_ANSWER: 0
@@ -144,7 +134,11 @@ exports.makeSmartCall = async (req, res) => {
                     - CREDIT_PENDING: 90
                     - CLOSED_DEAL: 100
 
-                    If they want to schedule, use 'create_task'.`,
+                    CRITICAL RULES:
+                    1. ACCESO A PDF: Tienes archivos PDF cargados con el inventario de carros. Es OBLIGATORIO que busques en ellos para dar precios y modelos. No digas que no tienes acceso.
+                    2. LECTURA DE NÚMEROS: Nunca digas números dígito por dígito. Si ves 5.000.000, di "Cinco millones". Siempre usa palabras para las cantidades grandes.
+                    3. NO COLGAR: Mantén la llamada activa hasta que el cliente se despida. Prohibido decir "callback" o frases de error.
+                    4. AGENDAMIENTO: Para agendar la cita, confirma primero Día y Hora, y luego ejecuta 'create_task'.`,
                   },
                 ],
                 tools: [
@@ -195,10 +189,6 @@ exports.makeSmartCall = async (req, res) => {
 
         return response.data;
       } catch (err) {
-        console.error(
-          `ERR: Falló llamada para ${customer.fullName}:`,
-          err.response?.data || err.message,
-        );
         return {
           error: true,
           customer: customer.fullName,
