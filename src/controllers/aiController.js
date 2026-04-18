@@ -14,6 +14,21 @@ const openai = new OpenAI({
 const TABLE_PAYMENTS = process.env.DYNAMODB_TABLE_PAYMENTS;
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 
+exports.getConfig = async (req, res) => {
+  const { tenantId } = req.params;
+  try {
+    const { Item } = await dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_CONFIGS,
+        Key: { businessId: tenantId },
+      }),
+    );
+    res.status(200).json(Item || {});
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 exports.updatePrompt = async (req, res) => {
   const { tenantId, systemPrompt } = req.body;
   if (!tenantId || systemPrompt === undefined) {
@@ -39,8 +54,11 @@ exports.updatePrompt = async (req, res) => {
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression: "SET systemPrompt = :p",
-        ExpressionAttributeValues: { ":p": newFullPrompt },
+        UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
+        ExpressionAttributeValues: {
+          ":p": newFullPrompt,
+          ":u": new Date().toISOString(),
+        },
       }),
     );
 
@@ -82,7 +100,6 @@ exports.setupAssistant = async (req, res) => {
     }
 
     let openaiId = Item?.openaiAssistantId;
-
     const assistantTools = [
       { type: "file_search" },
       {

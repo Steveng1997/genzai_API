@@ -22,6 +22,8 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
+router.get("/get-config/:tenantId", aiController.getConfig);
+
 router.post(
   "/setup-assistant",
   upload.array("files"),
