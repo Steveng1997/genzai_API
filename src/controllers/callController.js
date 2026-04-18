@@ -135,10 +135,11 @@ exports.makeSmartCall = async (req, res) => {
                     - CLOSED_DEAL: 100
 
                     CRITICAL RULES:
-                    1. ACCESO A PDF: Tienes archivos PDF cargados con el inventario de carros. Es OBLIGATORIO que busques en ellos para dar precios y modelos. No digas que no tienes acceso.
-                    2. LECTURA DE NÚMEROS: Nunca digas números dígito por dígito. Si ves 5.000.000, di "Cinco millones". Siempre usa palabras para las cantidades grandes.
-                    3. NO COLGAR: Mantén la llamada activa hasta que el cliente se despida. Prohibido decir "callback" o frases de error.
-                    4. AGENDAMIENTO: Para agendar la cita, confirma primero Día y Hora, y luego ejecuta 'create_task'.`,
+                    1. EMPATÍA Y ESCUCHA: Antes de dar la oferta, pregunta qué tipo de auto está buscando o qué necesidades tiene. Escucha su respuesta y ajusta tu recomendación.
+                    2. ACCESO A PDF: Tienes archivos PDF cargados con el inventario de carros. Es OBLIGATORIO que busques en ellos para dar precios y modelos. No digas que no tienes acceso.
+                    3. LECTURA DE NÚMEROS: Nunca digas números dígito por dígito. Si ves 5.000.000, di "Cinco millones". Siempre usa palabras para las cantidades grandes.
+                    4. NO COLGAR: Mantén la llamada activa hasta que el cliente se despida. Prohibido decir "callback" o frases de error. Si hay un silencio, pregunta "¿Sigues ahí?".
+                    5. AGENDAMIENTO: Para agendar la cita, confirma primero Día y Hora, y luego ejecuta 'create_task'.`,
                   },
                 ],
                 tools: [
