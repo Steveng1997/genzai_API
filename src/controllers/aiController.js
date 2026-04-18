@@ -70,6 +70,36 @@ exports.updatePrompt = async (req, res) => {
   }
 };
 
+exports.editPrompt = async (req, res) => {
+  const { tenantId, systemPrompt } = req.body;
+  if (!tenantId || systemPrompt === undefined) {
+    return res
+      .status(400)
+      .json({ message: "tenantId y systemPrompt son requeridos." });
+  }
+  try {
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: TABLE_CONFIGS,
+        Key: { businessId: tenantId },
+        UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
+        ExpressionAttributeValues: {
+          ":p": systemPrompt,
+          ":u": new Date().toISOString(),
+        },
+      }),
+    );
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Instrucciones actualizadas correctamente.",
+      });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   try {
@@ -147,21 +177,15 @@ exports.setupAssistant = async (req, res) => {
     }
 
     if (fileIds.length > 0) {
-      if (openai.beta && openai.beta.vectorStores) {
-        const vectorStore = await openai.beta.vectorStores.create({
-          name: `Store-${tenantId}-${Date.now()}`,
-          file_ids: fileIds,
-        });
-        await openai.beta.assistants.update(openaiId, {
-          tool_resources: {
-            file_search: { vector_store_ids: [vectorStore.id] },
-          },
-        });
-      } else {
-        console.warn(
-          "ADVERTENCIA: vectorStores no disponible. Los archivos se subieron pero no se vincularon.",
-        );
-      }
+      const vectorStore = await openai.beta.vectorStores.create({
+        name: `Store-${tenantId}-${Date.now()}`,
+        file_ids: fileIds,
+      });
+      await openai.beta.assistants.update(openaiId, {
+        tool_resources: {
+          file_search: { vector_store_ids: [vectorStore.id] },
+        },
+      });
     }
 
     await dynamoDB.send(
@@ -191,11 +215,13 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
-    res.status(200).json({
-      success: true,
-      message: "Riley configurada correctamente.",
-      openaiId,
-    });
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Riley configurada correctamente.",
+        openaiId,
+      });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {

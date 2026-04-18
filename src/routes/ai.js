@@ -31,5 +31,6 @@ router.post(
 );
 
 router.post("/update-prompt", aiController.updatePrompt);
+router.post("/edit-prompt", aiController.editPrompt);
 
 module.exports = router;
