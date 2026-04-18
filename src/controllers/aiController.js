@@ -37,34 +37,21 @@ exports.updatePrompt = async (req, res) => {
       .json({ message: "tenantId y systemPrompt son requeridos." });
   }
   try {
-    const { Item } = await dynamoDB.send(
-      new GetCommand({
-        TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
-      }),
-    );
-
-    let currentPrompt = Item?.systemPrompt || "";
-    let newFullPrompt =
-      currentPrompt === ""
-        ? `- ${systemPrompt}`
-        : `${currentPrompt}\n- ${systemPrompt}`;
-
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
+        UpdateExpression:
+          "SET systemPrompt = list_append(if_not_exists(systemPrompt, :empty_list), :p), updatedAt = :u",
         ExpressionAttributeValues: {
-          ":p": newFullPrompt,
+          ":p": [systemPrompt.trim()],
           ":u": new Date().toISOString(),
+          ":empty_list": [],
         },
       }),
     );
 
-    res
-      .status(200)
-      .json({ success: true, message: "Instrucciones acumuladas." });
+    res.status(200).json({ success: true, message: "Instrucción agregada." });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -72,10 +59,10 @@ exports.updatePrompt = async (req, res) => {
 
 exports.editPrompt = async (req, res) => {
   const { tenantId, systemPrompt } = req.body;
-  if (!tenantId || systemPrompt === undefined) {
+  if (!tenantId || !Array.isArray(systemPrompt)) {
     return res
       .status(400)
-      .json({ message: "tenantId y systemPrompt son requeridos." });
+      .json({ message: "tenantId y un array de systemPrompt son requeridos." });
   }
   try {
     await dynamoDB.send(
@@ -89,12 +76,10 @@ exports.editPrompt = async (req, res) => {
         },
       }),
     );
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Instrucciones actualizadas correctamente.",
-      });
+    res.status(200).json({
+      success: true,
+      message: "Instrucciones sincronizadas correctamente.",
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -215,13 +200,11 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Riley configurada correctamente.",
-        openaiId,
-      });
+    res.status(200).json({
+      success: true,
+      message: "Riley configurada correctamente.",
+      openaiId,
+    });
   } catch (e) {
     res.status(500).json({ message: "Error técnico", error: e.message });
   } finally {
