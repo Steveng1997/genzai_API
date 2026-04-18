@@ -61,19 +61,21 @@ exports.saveClient = async (req, res) => {
       nextStep,
       contactChannel,
       notes,
-      call_active,
       createdAt,
     } = req.body;
 
     if (!tenantId)
       return res.status(400).json({ error: "El tenantId es obligatorio" });
 
+    const channels = contactChannel || "Llamada";
+    const isCallActive = channels.toLowerCase().includes("llamada");
+
     const clientItem = {
       tenantId: tenantId.trim(),
       clientId: clientId || uuidv4(),
       fullName: (fullName || "N/A").trim(),
       identification: (identification || "N/A").trim(),
-      phone: Number(phone),
+      phone: phone ? Number(phone) : 0,
       email: (email || "N/A").trim(),
       city: (city || "N/A").trim(),
       company: (company || "N/A").trim(),
@@ -82,9 +84,9 @@ exports.saveClient = async (req, res) => {
       priority: priority || "Media",
       mainInterest: mainInterest || "",
       nextStep: nextStep || "",
-      contactChannel: contactChannel || "Llamada",
+      contactChannel: channels,
       notes: notes || "",
-      call_active: call_active !== undefined ? call_active : true,
+      call_active: isCallActive,
       updatedAt: new Date().toISOString(),
       createdAt: createdAt || new Date().toISOString(),
     };
@@ -122,6 +124,9 @@ exports.updateBasicInfo = async (req, res) => {
         .status(400)
         .json({ error: "tenantId y clientId son requeridos" });
 
+    const channels = contactChannel || "Llamada";
+    const isCallActive = channels.toLowerCase().includes("llamada");
+
     const command = new UpdateCommand({
       TableName: TABLE_CLIENTS,
       Key: { tenantId: tenantId.trim(), clientId: clientId.trim() },
@@ -138,11 +143,12 @@ exports.updateBasicInfo = async (req, res) => {
         nextStep = :ns, 
         contactChannel = :cc, 
         notes = :nt, 
+        call_active = :ca,
         updatedAt = :u`,
       ExpressionAttributeNames: { "#st": "status" },
       ExpressionAttributeValues: {
         ":n": (fullName || "N/A").trim(),
-        ":p": Number(phone),
+        ":p": phone ? Number(phone) : 0,
         ":e": (email || "N/A").trim(),
         ":i": (identification || "N/A").trim(),
         ":s": status || "NUEVO",
@@ -151,8 +157,9 @@ exports.updateBasicInfo = async (req, res) => {
         ":pr": priority || "Media",
         ":mi": mainInterest || "",
         ":ns": nextStep || "",
-        ":cc": contactChannel || "Llamada",
+        ":cc": channels,
         ":nt": notes || "",
+        ":ca": isCallActive,
         ":u": new Date().toISOString(),
       },
       ReturnValues: "ALL_NEW",
