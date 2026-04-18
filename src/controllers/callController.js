@@ -41,9 +41,11 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config || !config.assistantId) {
-      return res.status(404).json({
-        message: "No hay IA configurada en Vapi o falta assistantId.",
-      });
+      return res
+        .status(404)
+        .json({
+          message: "No hay IA configurada en Vapi o falta assistantId.",
+        });
     }
 
     const { Items: customers } = await dynamoDB.send(
@@ -124,22 +126,15 @@ exports.makeSmartCall = async (req, res) => {
                     - Company: ${company}
                     - Greeting: "${tempGreeting} ${customer.fullName}"
 
-                    PROGRESS STATUS RULES:
-                    - NO_ANSWER: 0
-                    - INTERESTED: 10
-                    - INFO_SENT: 30
-                    - APPOINTMENT_SET: 50
-                    - DOCUMENTATION: 70
-                    - RESERVATION: 80
-                    - CREDIT_PENDING: 90
-                    - CLOSED_DEAL: 100
-
-                    CRITICAL RULES:
-                    1. EMPATÍA Y ESCUCHA: Antes de dar la oferta, pregunta qué tipo de auto está buscando o qué necesidades tiene. Escucha su respuesta y ajusta tu recomendación.
-                    2. ACCESO A PDF: Tienes archivos PDF cargados con el inventario de carros. Es OBLIGATORIO que busques en ellos para dar precios y modelos. No digas que no tienes acceso.
-                    3. LECTURA DE NÚMEROS: Nunca digas números dígito por dígito. Si ves 5.000.000, di "Cinco millones". Siempre usa palabras para las cantidades grandes.
-                    4. NO COLGAR: Mantén la llamada activa hasta que el cliente se despida. Prohibido decir "callback" o frases de error. Si hay un silencio, pregunta "¿Sigues ahí?".
-                    5. AGENDAMIENTO: Para agendar la cita, confirma primero Día y Hora, y luego ejecuta 'create_task'.`,
+                    RULES:
+                    1. PROHIBIDO decir "PDF" o "archivos". Di: "estoy revisando el inventario".
+                    2. Si tardas en leer, mantén al cliente informado: "Sigo buscando, un momento".
+                    3. No cuelgues nunca por errores técnicos.
+                    4. Precios siempre en palabras (ej: Diez millones).
+                    5. Antes de ofrecer la oferta de Mazda o cualquier otra, pregunta qué busca el cliente.
+                    
+                    STATUS:
+                    NO_ANSWER: 0, INTERESTED: 10, INFO_SENT: 30, APPOINTMENT_SET: 50, DOCUMENTATION: 70, RESERVATION: 80, CREDIT_PENDING: 90, CLOSED_DEAL: 100`,
                   },
                 ],
                 tools: [
