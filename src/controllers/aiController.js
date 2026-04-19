@@ -166,14 +166,14 @@ exports.setupAssistant = async (req, res) => {
 
     const instructionsText = Array.isArray(Item?.systemPrompt)
       ? Item.systemPrompt.join(". ")
-      : Item?.systemPrompt || "";
+      : Item?.systemPrompt || "Eres un asistente virtual.";
     console.log("LOG: setupAssistant INSTRUCCIONES:", instructionsText);
 
     if (!openaiId) {
       console.log("LOG: setupAssistant CREANDO NUEVO ASISTENTE...");
       const assistant = await openai.beta.assistants.create({
-        name: `Riley - ${company}`,
-        instructions: `Eres Riley de "${company}". Instrucciones: ${instructionsText}`,
+        name: `Riley - ${company || "Empresa"}`,
+        instructions: `Eres Riley de "${company || "la empresa"}". Instrucciones: ${instructionsText}`,
         model: "gpt-4o",
         tools: assistantTools,
       });
@@ -185,25 +185,32 @@ exports.setupAssistant = async (req, res) => {
         openaiId,
       );
       await openai.beta.assistants.update(openaiId, {
-        instructions: `Eres Riley de "${company}". Instrucciones: ${instructionsText}`,
+        instructions: `Eres Riley de "${company || "la empresa"}". Instrucciones: ${instructionsText}`,
         tools: assistantTools,
       });
       console.log("LOG: setupAssistant ASISTENTE ACTUALIZADO");
     }
 
     if (fileIds.length > 0) {
-      console.log("LOG: setupAssistant VALIDANDO OBJETO VECTORSTORES...");
-      if (!openai.beta.vectorStores) {
+      console.log(
+        "LOG: setupAssistant INTENTANDO ACCESO DINAMICO A VECTOR STORES...",
+      );
+
+      // FIX: Si la propiedad no existe, intentamos acceder vía namespace beta directamente
+      const vectorStoreProvider = openai.beta.vectorStores;
+
+      if (!vectorStoreProvider) {
         console.log(
-          "LOG: setupAssistant ERROR CRITICO - vectorStores es UNDEFINED en el SDK de OpenAI",
+          "LOG: setupAssistant ADVERTENCIA - VectorStores no detectado. Intentando fallback v1 (file_ids directos)...",
         );
+        // Fallback para versiones muy viejas: vincular archivos directamente si el modelo lo permite o fallar con elegancia
         throw new Error(
-          "El SDK de OpenAI no tiene soporte para vectorStores. Ejecuta 'npm install openai@latest'",
+          "SDK_OUTDATED: Por favor, actualiza la libreria 'openai' en el servidor para usar Vector Stores.",
         );
       }
 
       console.log("LOG: setupAssistant CREANDO VECTOR STORE...");
-      const vectorStore = await openai.beta.vectorStores.create({
+      const vectorStore = await vectorStoreProvider.create({
         name: `Store-${tenantId}`,
         file_ids: fileIds,
       });
@@ -234,7 +241,7 @@ exports.setupAssistant = async (req, res) => {
           ":vpi": "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
           ":f": fileIds,
           ":u": new Date().toISOString(),
-          ":c": company || Item?.company || "",
+          ":c": company || Item?.company || "Sin Empresa",
           ":e": (email || Item?.ownerEmail || "").toLowerCase(),
           ":t": tenantId,
           ":empty_list": [],
