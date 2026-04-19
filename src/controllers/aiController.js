@@ -37,6 +37,7 @@ exports.updatePrompt = async (req, res) => {
       .json({ message: "tenantId y systemPrompt son requeridos." });
   }
   try {
+    // CORRECCIÓN: Asegurar que siempre sea un Array de strings
     const finalPrompt = Array.isArray(systemPrompt)
       ? systemPrompt
       : [systemPrompt.toString().trim()];
@@ -140,6 +141,11 @@ exports.setupAssistant = async (req, res) => {
       },
     ];
 
+    // CORRECCIÓN: Preparar instrucciones uniendo el array guardado en DB si existe
+    const savedPrompt = Array.isArray(Item?.systemPrompt)
+      ? Item.systemPrompt.join(". ")
+      : Item?.systemPrompt || "";
+
     if (!openaiId) {
       const payments = await dynamoDB.send(
         new ScanCommand({
@@ -150,9 +156,10 @@ exports.setupAssistant = async (req, res) => {
       );
       const productDesc =
         payments.Items?.[0]?.sellingProduct || "productos generales";
+
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company}`,
-        instructions: `Eres Riley de "${company}". Info: ${productDesc}.`,
+        instructions: `Eres Riley de "${company}". Info: ${productDesc}. Instrucciones adicionales: ${savedPrompt}`,
         model: "gpt-4o",
         tools: assistantTools,
       });
@@ -160,6 +167,7 @@ exports.setupAssistant = async (req, res) => {
     } else {
       await openai.beta.assistants.update(openaiId, {
         name: `Riley - ${company}`,
+        instructions: `Eres Riley de "${company}". Instrucciones: ${savedPrompt}`,
         tools: assistantTools,
       });
     }
