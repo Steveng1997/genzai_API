@@ -1,4 +1,5 @@
 const OpenAI = require("openai");
+const axios = require("axios"); // Necesario para el bypass manual si el SDK es viejo
 const {
   UpdateCommand,
   GetCommand,
@@ -193,38 +194,63 @@ exports.setupAssistant = async (req, res) => {
 
     if (fileIds.length > 0) {
       console.log(
-        "LOG: setupAssistant INTENTANDO ACCESO DINAMICO A VECTOR STORES...",
+        "LOG: setupAssistant CREANDO VECTOR STORE (MODO COMPATIBILIDAD)...",
       );
 
-      // FIX: Si la propiedad no existe, intentamos acceder vía namespace beta directamente
-      const vectorStoreProvider = openai.beta.vectorStores;
-
-      if (!vectorStoreProvider) {
+      let vectorStoreId;
+      try {
+        // Intentar con el SDK primero
+        const vectorStore = await openai.beta.vectorStores.create({
+          name: `Store-${tenantId}`,
+          file_ids: fileIds,
+        });
+        vectorStoreId = vectorStore.id;
+      } catch (sdkError) {
         console.log(
-          "LOG: setupAssistant ADVERTENCIA - VectorStores no detectado. Intentando fallback v1 (file_ids directos)...",
+          "LOG: SDK no soporta VectorStores, usando modo manual HTTP...",
         );
-        // Fallback para versiones muy viejas: vincular archivos directamente si el modelo lo permite o fallar con elegancia
-        throw new Error(
-          "SDK_OUTDATED: Por favor, actualiza la libreria 'openai' en el servidor para usar Vector Stores.",
+        // BYPASS MANUAL con Axios para saltar el error del SDK viejo
+        const vsResponse = await axios.post(
+          "https://api.openai.com/v1/vector_stores",
+          { name: `Store-${tenantId}`, file_ids: fileIds },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json",
+              "OpenAI-Beta": "assistants=v2",
+            },
+          },
         );
+        vectorStoreId = vsResponse.data.id;
       }
 
-      console.log("LOG: setupAssistant CREANDO VECTOR STORE...");
-      const vectorStore = await vectorStoreProvider.create({
-        name: `Store-${tenantId}`,
-        file_ids: fileIds,
-      });
-      console.log(
-        "LOG: setupAssistant VECTOR STORE CREADO ID:",
-        vectorStore.id,
-      );
+      console.log("LOG: VECTOR STORE ID:", vectorStoreId);
 
-      console.log(
-        "LOG: setupAssistant VINCULANDO VECTOR STORE AL ASISTENTE...",
-      );
-      await openai.beta.assistants.update(openaiId, {
-        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
-      });
+      console.log("LOG: VINCULANDO AL ASISTENTE...");
+      try {
+        await openai.beta.assistants.update(openaiId, {
+          tool_resources: {
+            file_search: { vector_store_ids: [vectorStoreId] },
+          },
+        });
+      } catch (vincError) {
+        // Bypass manual para vinculación
+        await axios.post(
+          `https://api.openai.com/v1/assistants/${openaiId}`,
+          {
+            tool_resources: {
+              file_search: { vector_store_ids: [vectorStoreId] },
+            },
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json",
+              "OpenAI-Beta": "assistants=v2",
+            },
+          },
+        );
+      }
       console.log("LOG: setupAssistant VINCULACION EXITOSA");
     }
 
@@ -254,7 +280,6 @@ exports.setupAssistant = async (req, res) => {
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
     console.log("LOG ERROR CRITICO setupAssistant:", e.message);
-    console.log("LOG STACK ERROR:", e.stack);
     res.status(500).json({ error: e.message, stack: e.stack });
   }
 };
