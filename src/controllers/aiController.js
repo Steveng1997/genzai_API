@@ -131,17 +131,15 @@ exports.setupAssistant = async (req, res) => {
     for (const file of files) {
       console.log("LOG: Subiendo archivo a OpenAI:", file.originalname);
 
-      // --- CORRECCIÓN AQUÍ ---
-      // Usamos fetch/file compatible con OpenAI v4 enviando el buffer directamente
+      // --- CORRECCIÓN DEFINITIVA PARA OPENAI V4 ---
+      // Usamos toFile para convertir el buffer en un archivo válido con nombre
+      const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
+
       const uploadResponse = await openai.files.create({
-        file: {
-          url: file.originalname,
-          // Cambiado de función anónima a la instancia directa de Buffer
-          blob: new Blob([file.buffer]),
-        },
+        file: fileStream,
         purpose: "assistants",
       });
-      // ------------------------
+      // ---------------------------------------------
 
       console.log("LOG: Archivo subido con ID:", uploadResponse.id);
       fileIds.push(uploadResponse.id);
