@@ -130,17 +130,11 @@ exports.setupAssistant = async (req, res) => {
     const fileIds = [];
     for (const file of files) {
       console.log("LOG: Subiendo archivo a OpenAI:", file.originalname);
-
-      // --- CORRECCIÓN DEFINITIVA PARA OPENAI V4 ---
-      // Usamos toFile para convertir el buffer en un archivo válido con nombre
       const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
-
       const uploadResponse = await openai.files.create({
         file: fileStream,
         purpose: "assistants",
       });
-      // ---------------------------------------------
-
       console.log("LOG: Archivo subido con ID:", uploadResponse.id);
       fileIds.push(uploadResponse.id);
     }
@@ -194,6 +188,7 @@ exports.setupAssistant = async (req, res) => {
 
     if (fileIds.length > 0) {
       console.log("LOG: Creando Vector Store...");
+
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
         file_ids: fileIds,
@@ -211,15 +206,8 @@ exports.setupAssistant = async (req, res) => {
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
-        UpdateExpression: `SET 
-          openaiAssistantId = :oa, 
-          assistantId = :va, 
-          vapiPhoneNumberId = :vpi,
-          openaiFileIds = list_append(if_not_exists(openaiFileIds, :empty_list), :f), 
-          updatedAt = :u, 
-          company = :c, 
-          ownerEmail = :e, 
-          tenantId = :t`,
+        UpdateExpression:
+          "SET openaiAssistantId = :oa, assistantId = :va, vapiPhoneNumberId = :vpi, openaiFileIds = list_append(if_not_exists(openaiFileIds, :empty_list), :f), updatedAt = :u, company = :c, ownerEmail = :e, tenantId = :t",
         ExpressionAttributeValues: {
           ":oa": openaiId,
           ":va": vapiAssistantId || "4c266662-68db-4046-a13f-8c021c84919c",
