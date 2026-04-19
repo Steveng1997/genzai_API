@@ -14,8 +14,8 @@ const TABLE_PAYMENTS = process.env.DYNAMODB_TABLE_PAYMENTS;
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 
 exports.getConfig = async (req, res) => {
+  console.log("LOG: getConfig INICIO - tenantId:", req.params.tenantId);
   const { tenantId } = req.params;
-  console.log("LOG: getConfig iniciado para", tenantId);
   try {
     const { Item } = await dynamoDB.send(
       new GetCommand({
@@ -23,19 +23,19 @@ exports.getConfig = async (req, res) => {
         Key: { businessId: tenantId },
       }),
     );
-    console.log("LOG: getConfig resultado obtenido", JSON.stringify(Item));
+    console.log("LOG: getConfig DynamoDB EXITO - Item:", JSON.stringify(Item));
     res.status(200).json(Item || {});
   } catch (e) {
-    console.log("LOG ERROR: getConfig", e.message);
+    console.log("LOG ERROR: getConfig FALLO:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.updatePrompt = async (req, res) => {
+  console.log("LOG: updatePrompt INICIO - Body:", JSON.stringify(req.body));
   const { tenantId, systemPrompt, company, email } = req.body;
-  console.log("LOG: updatePrompt iniciado", { tenantId, company, email });
   if (!tenantId || systemPrompt === undefined) {
-    console.log("LOG: Error Validacion updatePrompt");
+    console.log("LOG: updatePrompt ERROR VALIDACION");
     return res
       .status(400)
       .json({ message: "tenantId y systemPrompt son requeridos." });
@@ -44,8 +44,7 @@ exports.updatePrompt = async (req, res) => {
     const finalPrompt = Array.isArray(systemPrompt)
       ? systemPrompt
       : [systemPrompt.toString().trim()];
-    console.log("LOG: finalPrompt procesado", finalPrompt);
-
+    console.log("LOG: updatePrompt PROCESANDO - finalPrompt:", finalPrompt);
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -61,21 +60,21 @@ exports.updatePrompt = async (req, res) => {
         },
       }),
     );
-    console.log("LOG: updatePrompt DynamoDB guardado");
+    console.log("LOG: updatePrompt DynamoDB EXITO");
     res
       .status(200)
       .json({ success: true, message: "Instrucciones actualizadas." });
   } catch (e) {
-    console.log("LOG ERROR: updatePrompt", e.message);
+    console.log("LOG ERROR: updatePrompt FALLO:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.editPrompt = async (req, res) => {
+  console.log("LOG: editPrompt INICIO - Body:", JSON.stringify(req.body));
   const { tenantId, systemPrompt } = req.body;
-  console.log("LOG: editPrompt iniciado", { tenantId });
   if (!tenantId || !Array.isArray(systemPrompt)) {
-    console.log("LOG: Error Validacion editPrompt");
+    console.log("LOG: editPrompt ERROR VALIDACION");
     return res
       .status(400)
       .json({ message: "tenantId y un array son requeridos." });
@@ -92,10 +91,10 @@ exports.editPrompt = async (req, res) => {
         },
       }),
     );
-    console.log("LOG: editPrompt DynamoDB actualizado");
+    console.log("LOG: editPrompt DynamoDB EXITO");
     res.status(200).json({ success: true });
   } catch (e) {
-    console.log("LOG ERROR: editPrompt", e.message);
+    console.log("LOG ERROR: editPrompt FALLO:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -106,7 +105,7 @@ exports.setupAssistant = async (req, res) => {
   let { email, company, tenantId, vapiAssistantId } = req.body;
   tenantId = (tenantId || "").trim();
 
-  console.log("LOG: Payload recibido", {
+  console.log("LOG: setupAssistant DATA RECIBIDA:", {
     email,
     company,
     tenantId,
@@ -115,34 +114,34 @@ exports.setupAssistant = async (req, res) => {
   });
 
   if (!tenantId) {
-    console.log("LOG: ERROR - No tenantId");
+    console.log("LOG: setupAssistant ERROR - FALTA tenantId");
     return res.status(400).json({ message: "Falta el tenantId." });
   }
 
   try {
-    console.log("LOG: Consultando configuracion en DynamoDB...");
+    console.log("LOG: setupAssistant CONSULTANDO DYNAMO...");
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
         Key: { businessId: tenantId },
       }),
     );
-    console.log("LOG: Config de DynamoDB", JSON.stringify(Item));
+    console.log("LOG: setupAssistant DYNAMO RESULT:", JSON.stringify(Item));
 
     const fileIds = [];
     for (const file of files) {
-      console.log("LOG: Procesando archivo para OpenAI", file.originalname);
+      console.log("LOG: setupAssistant SUBIENDO ARCHIVO:", file.originalname);
       const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
       const uploadResponse = await openai.files.create({
         file: fileStream,
         purpose: "assistants",
       });
-      console.log("LOG: OpenAI file subido con ID", uploadResponse.id);
+      console.log("LOG: setupAssistant OPENAI FILE ID:", uploadResponse.id);
       fileIds.push(uploadResponse.id);
     }
 
     let openaiId = Item?.openaiAssistantId;
-    console.log("LOG: openaiId actual", openaiId);
+    console.log("LOG: setupAssistant openaiId ACTUAL:", openaiId);
 
     const assistantTools = [
       { type: "file_search" },
@@ -168,10 +167,10 @@ exports.setupAssistant = async (req, res) => {
     const instructionsText = Array.isArray(Item?.systemPrompt)
       ? Item.systemPrompt.join(". ")
       : Item?.systemPrompt || "";
-    console.log("LOG: Instrucciones finales", instructionsText);
+    console.log("LOG: setupAssistant INSTRUCCIONES:", instructionsText);
 
     if (!openaiId) {
-      console.log("LOG: Intentando crear nuevo Assistant en OpenAI...");
+      console.log("LOG: setupAssistant CREANDO NUEVO ASISTENTE...");
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company}`,
         instructions: `Eres Riley de "${company}". Instrucciones: ${instructionsText}`,
@@ -179,38 +178,50 @@ exports.setupAssistant = async (req, res) => {
         tools: assistantTools,
       });
       openaiId = assistant.id;
-      console.log("LOG: Assistant CREADO en OpenAI con ID", openaiId);
+      console.log("LOG: setupAssistant NUEVO ID ASISTENTE:", openaiId);
     } else {
       console.log(
-        "LOG: Intentando actualizar Assistant existente en OpenAI",
+        "LOG: setupAssistant ACTUALIZANDO ASISTENTE EXISTENTE:",
         openaiId,
       );
       await openai.beta.assistants.update(openaiId, {
         instructions: `Eres Riley de "${company}". Instrucciones: ${instructionsText}`,
         tools: assistantTools,
       });
-      console.log("LOG: Assistant ACTUALIZADO en OpenAI");
+      console.log("LOG: setupAssistant ASISTENTE ACTUALIZADO");
     }
 
     if (fileIds.length > 0) {
-      console.log(
-        "LOG: Iniciando creacion de Vector Store con archivos",
-        fileIds,
-      );
+      console.log("LOG: setupAssistant VALIDANDO OBJETO VECTORSTORES...");
+      if (!openai.beta.vectorStores) {
+        console.log(
+          "LOG: setupAssistant ERROR CRITICO - vectorStores es UNDEFINED en el SDK de OpenAI",
+        );
+        throw new Error(
+          "El SDK de OpenAI no tiene soporte para vectorStores. Ejecuta 'npm install openai@latest'",
+        );
+      }
+
+      console.log("LOG: setupAssistant CREANDO VECTOR STORE...");
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
         file_ids: fileIds,
       });
-      console.log("LOG: Vector Store CREADO con ID", vectorStore.id);
+      console.log(
+        "LOG: setupAssistant VECTOR STORE CREADO ID:",
+        vectorStore.id,
+      );
 
-      console.log("LOG: Vinculando Vector Store al Assistant...");
+      console.log(
+        "LOG: setupAssistant VINCULANDO VECTOR STORE AL ASISTENTE...",
+      );
       await openai.beta.assistants.update(openaiId, {
         tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
-      console.log("LOG: Assistant vinculado exitosamente al Vector Store");
+      console.log("LOG: setupAssistant VINCULACION EXITOSA");
     }
 
-    console.log("LOG: Guardando cambios finales en DynamoDB...");
+    console.log("LOG: setupAssistant ACTUALIZANDO DYNAMO FINAL...");
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -230,13 +241,13 @@ exports.setupAssistant = async (req, res) => {
         },
       }),
     );
-    console.log("LOG: DynamoDB actualizado correctamente");
+    console.log("LOG: setupAssistant DYNAMO ACTUALIZADO CON EXITO");
 
-    console.log("LOG: setupAssistant FINALIZADO EXITOSAMENTE");
+    console.log("LOG: setupAssistant TERMINADO OK");
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
-    console.log("LOG ERROR CRITICO setupAssistant:", e);
-    console.log("LOG ERROR STACK:", e.stack);
+    console.log("LOG ERROR CRITICO setupAssistant:", e.message);
+    console.log("LOG STACK ERROR:", e.stack);
     res.status(500).json({ error: e.message, stack: e.stack });
   }
 };
