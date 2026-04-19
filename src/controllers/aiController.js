@@ -5,7 +5,7 @@ const {
   ScanCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
-const fs = require("fs");
+const { Readable } = require("stream");
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -95,9 +95,6 @@ exports.setupAssistant = async (req, res) => {
   tenantId = (tenantId || "").trim();
 
   if (!tenantId) {
-    files.forEach((f) => {
-      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-    });
     return res.status(400).json({ message: "Falta el tenantId." });
   }
 
@@ -111,8 +108,11 @@ exports.setupAssistant = async (req, res) => {
 
     const fileIds = [];
     for (const file of files) {
+      const stream = Readable.from(file.buffer);
+      stream.path = file.originalname;
+
       const uploadResponse = await openai.files.create({
-        file: fs.createReadStream(file.path),
+        file: stream,
         purpose: "assistants",
       });
       fileIds.push(uploadResponse.id);
@@ -204,9 +204,5 @@ exports.setupAssistant = async (req, res) => {
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
     res.status(500).json({ error: e.message });
-  } finally {
-    files.forEach((f) => {
-      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-    });
   }
 };
