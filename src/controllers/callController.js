@@ -41,11 +41,9 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!config || !config.assistantId) {
-      return res
-        .status(404)
-        .json({
-          message: "No hay IA configurada en Vapi o falta assistantId.",
-        });
+      return res.status(404).json({
+        message: "No hay IA configurada en Vapi o falta assistantId.",
+      });
     }
 
     const { Items: customers } = await dynamoDB.send(
@@ -91,6 +89,9 @@ exports.makeSmartCall = async (req, res) => {
             assistantOverrides: {
               serverUrl:
                 "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
+              silenceTimeoutSeconds: 30,
+              maxDurationSeconds: 600,
+              backchannelingEnabled: true,
               analysisPlan: {
                 structuredDataSchema: {
                   type: "object",
@@ -118,23 +119,35 @@ exports.makeSmartCall = async (req, res) => {
                 messages: [
                   {
                     role: "system",
-                    content: `${config.systemPrompt || `Eres Riley, asesora experta de ${company}.`}
-                    
-                    DYNAMIC CONTEXT:
-                    - Customer: ${customer.fullName}
-                    - Customer ID: ${customer.clientId}
-                    - Company: ${company}
-                    - Greeting: "${tempGreeting} ${customer.fullName}"
+                    content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. Tu prioridad es escuchar al cliente y asesorarlo según el inventario disponible.
 
-                    RULES:
-                    1. PROHIBIDO decir "PDF" o "archivos". Di: "estoy revisando el inventario".
-                    2. Si tardas en leer, mantén al cliente informado: "Sigo buscando, un momento".
-                    3. No cuelgues nunca por errores técnicos.
-                    4. Precios siempre en palabras (ej: Diez millones).
-                    5. Antes de ofrecer la oferta de Mazda o cualquier otra, pregunta qué busca el cliente.
+                    REGLAS DE ORO (PROHIBIDO FALLAR):
+                    1. EMPATÍA Y SONDEO: No lances ofertas de inmediato. Saluda y pregunta: "¿Qué tipo de vehículo está buscando?" o "¿Para qué uso necesita el auto?". Escucha y luego ofrece.
+                    2. BÚSQUEDA DE INVENTARIO: Cuando busques información, di: "Permítame un segundo reviso qué inventario tengo disponible para usted..." o "Déjeme verificar los modelos actuales...". ESTÁ PROHIBIDO decir la palabra "PDF" o "archivo".
+                    3. NO COLGAR: Mantén la llamada activa siempre. Si el sistema tarda en darte la info de los archivos, di: "Sigo aquí buscando los detalles, un momento por favor". Nunca digas "callback" ni "error técnico".
+                    4. PRECIOS: Di los precios en palabras. Ejemplo: 10.000.000 es "Diez millones de pesos". Nunca "uno cero cero...".
                     
-                    STATUS:
-                    NO_ANSWER: 0, INTERESTED: 10, INFO_SENT: 30, APPOINTMENT_SET: 50, DOCUMENTATION: 70, RESERVATION: 80, CREDIT_PENDING: 90, CLOSED_DEAL: 100`,
+                    5. STATUS DE PROGRESO:
+                    - NO_ANSWER: 0 | INTERESTED: 10 | INFO_SENT: 30 | APPOINTMENT_SET: 50 | DOCUMENTATION: 70 | RESERVATION: 80 | CREDIT_PENDING: 90 | CLOSED_DEAL: 100
+                    
+                    FLUJO DE CONVERSACIÓN:
+                    1. SALUDO: ${tempGreeting} ${customer.fullName}.
+                    2. SONDEO: Interésate por sus necesidades antes de vender.
+                    3. INVENTARIO: Si el cliente acepta o pregunta, revisa tus documentos adjuntos y da opciones reales.
+                    4. CIERRE: Pregunta método de pago (Efectivo, Cheque o Transferencia) antes de la cita.
+                    
+                    AGENDAMIENTO DE CITAS:
+                    1. Pregunta DÍA y luego HORA.
+                    2. CONFIRMA: "Perfecto, agendado para el [Día] a las [Hora]".
+                    3. SOLO TRAS ESTA CONFIRMACIÓN, usa la herramienta 'create_task'.
+                    
+                    DATOS TÉCNICOS OBLIGATORIOS PARA 'create_task':
+                    - tenantId: "${tenantId}"
+                    - clientId: "${customer.clientId}"
+                    - customerName: "${customer.fullName}"
+                    - company: "${company}"
+                    
+                    ANTI-CONTESTADOR: Cuelga solo si escuchas el "beep" de buzón. Con humanos, no cuelgues hasta que ellos se despidan.`,
                   },
                 ],
                 tools: [
@@ -157,6 +170,7 @@ exports.makeSmartCall = async (req, res) => {
                           tenantId: { type: "string" },
                           clientId: { type: "string" },
                           customerName: { type: "string" },
+                          company: { type: "string" },
                         },
                         required: [
                           "titulo",
@@ -164,6 +178,7 @@ exports.makeSmartCall = async (req, res) => {
                           "tenantId",
                           "clientId",
                           "customerName",
+                          "company",
                         ],
                       },
                     },
@@ -178,6 +193,7 @@ exports.makeSmartCall = async (req, res) => {
               tenantId: tenantId,
               company: company,
               clientId: customer.clientId,
+              email: email,
             },
           },
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },

@@ -84,37 +84,53 @@ exports.handleRileyTool = async (req, res) => {
 
   try {
     const payload = req.body.message || req.body;
+
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
+
     if (!toolCall) return res.status(400).json({ error: "No tool call data" });
+
     const args =
       typeof toolCall.function.arguments === "string"
         ? JSON.parse(toolCall.function.arguments)
         : toolCall.function.arguments;
-    const { titulo, detalle, company, tenantId, clientId, customerName } = args;
+
+    const metadata = payload.call?.metadata || {};
+
+    const taskItem = {
+      taskId: Date.now(),
+      tenantId: args.tenantId || metadata.tenantId,
+      clientId: args.clientId || metadata.clientId,
+      customerName: args.customerName || metadata.customerName || "Cliente",
+      company: args.company || metadata.company,
+      title: args.titulo || "Nueva Cita Agendada",
+      description: args.detalle || "Sin detalles adicionales",
+      isCompleted: false,
+      createdAt: new Date().toISOString(),
+      source: "Riley Assistant",
+    };
+
+    if (!taskItem.tenantId) {
+      throw new Error("Missing tenantId in tool call or metadata");
+    }
+
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_TASKS,
-        Item: {
-          taskId: Date.now(),
-          tenantId: tenantId,
-          clientId: clientId,
-          customerName: customerName,
-          company: company,
-          title: titulo || "Nueva Tarea",
-          description: detalle || "Sin detalles",
-          isCompleted: false,
-          createdAt: new Date().toISOString(),
-          source: "Riley Assistant",
-        },
+        Item: taskItem,
       }),
     );
+
     return res.status(200).json({
       results: [
-        { toolCallId: toolCall.id, result: "Tarea agendada correctamente" },
+        {
+          toolCallId: toolCall.id,
+          result: "Tarea agendada exitosamente en el sistema.",
+        },
       ],
     });
   } catch (e) {
+    console.error("Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
