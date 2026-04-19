@@ -183,7 +183,7 @@ exports.makeSmartCall = async (req, res) => {
                       },
                     },
                     server: {
-                      url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/task/riley-create",
+                      url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
                     },
                   },
                 ],
