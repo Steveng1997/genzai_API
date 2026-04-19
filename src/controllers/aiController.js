@@ -167,8 +167,12 @@ exports.setupAssistant = async (req, res) => {
     if (fileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
-        file_ids: fileIds,
       });
+
+      await openai.beta.vectorStores.files.createAndPoll(vectorStore.id, {
+        file_id: fileIds[0],
+      });
+
       await openai.beta.assistants.update(openaiId, {
         tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
