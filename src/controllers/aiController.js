@@ -5,7 +5,6 @@ const {
   ScanCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
-const { Readable } = require("stream");
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -37,7 +36,6 @@ exports.updatePrompt = async (req, res) => {
       .json({ message: "tenantId y systemPrompt son requeridos." });
   }
   try {
-    // CORRECCIÓN: Asegurar que siempre sea un Array de strings
     const finalPrompt = Array.isArray(systemPrompt)
       ? systemPrompt
       : [systemPrompt.toString().trim()];
@@ -109,11 +107,12 @@ exports.setupAssistant = async (req, res) => {
 
     const fileIds = [];
     for (const file of files) {
-      const stream = Readable.from(file.buffer);
-      stream.path = file.originalname;
-
+      // CORRECCIÓN: Subida de archivos usando el buffer directamente (OpenAI v4)
       const uploadResponse = await openai.files.create({
-        file: stream,
+        file: {
+          url: file.originalname,
+          blob: () => new Blob([file.buffer]),
+        },
         purpose: "assistants",
       });
       fileIds.push(uploadResponse.id);
@@ -132,8 +131,8 @@ exports.setupAssistant = async (req, res) => {
             properties: {
               titulo: { type: "string" },
               detalle: { type: "string" },
-              company: { type: "string", enum: [company] },
-              tenantId: { type: "string", enum: [tenantId] },
+              company: { type: "string" },
+              tenantId: { type: "string" },
             },
             required: ["titulo", "tenantId", "company"],
           },
@@ -141,33 +140,21 @@ exports.setupAssistant = async (req, res) => {
       },
     ];
 
-    // CORRECCIÓN: Preparar instrucciones uniendo el array guardado en DB si existe
-    const savedPrompt = Array.isArray(Item?.systemPrompt)
+    const instructionsText = Array.isArray(Item?.systemPrompt)
       ? Item.systemPrompt.join(". ")
       : Item?.systemPrompt || "";
 
     if (!openaiId) {
-      const payments = await dynamoDB.send(
-        new ScanCommand({
-          TableName: TABLE_PAYMENTS,
-          FilterExpression: "tenantId = :t",
-          ExpressionAttributeValues: { ":t": tenantId },
-        }),
-      );
-      const productDesc =
-        payments.Items?.[0]?.sellingProduct || "productos generales";
-
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company}`,
-        instructions: `Eres Riley de "${company}". Info: ${productDesc}. Instrucciones adicionales: ${savedPrompt}`,
+        instructions: `Eres Riley de "${company}". Instrucciones: ${instructionsText}`,
         model: "gpt-4o",
         tools: assistantTools,
       });
       openaiId = assistant.id;
     } else {
       await openai.beta.assistants.update(openaiId, {
-        name: `Riley - ${company}`,
-        instructions: `Eres Riley de "${company}". Instrucciones: ${savedPrompt}`,
+        instructions: `Eres Riley de "${company}". Instrucciones: ${instructionsText}`,
         tools: assistantTools,
       });
     }
@@ -175,10 +162,7 @@ exports.setupAssistant = async (req, res) => {
     if (fileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
-      });
-
-      await openai.beta.vectorStores.files.createAndPoll(vectorStore.id, {
-        file_id: fileIds[0],
+        file_ids: fileIds,
       });
 
       await openai.beta.assistants.update(openaiId, {
@@ -215,6 +199,7 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
+    console.error("Error setupAssistant:", e);
     res.status(500).json({ error: e.message });
   }
 };
