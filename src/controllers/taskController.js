@@ -168,9 +168,6 @@ exports.handleVapiWebhook = async (req, res) => {
       "declined",
     ];
 
-    // LÓGICA DE ANSWERED:
-    // False si el motivo está en la lista negra O si el estado es NO_ANSWER
-    // True solo si el motivo no es de fallo y hubo una duración mínima
     let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
 
     if (analysis?.structuredData?.status === "NO_ANSWER") {
@@ -178,12 +175,15 @@ exports.handleVapiWebhook = async (req, res) => {
     }
 
     const minutesToSubtract = Math.round(rawDuration / 60);
+
     const negotiationStatus =
       analysis?.structuredData?.status ||
       (wasAnswered ? "INTERESTED" : "NO_ANSWER");
+
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
 
+    // 1. REGISTRO EN HISTORIAL
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -207,10 +207,31 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
+    // 2. ACTUALIZACIÓN DEL STATUS EN LA TABLA CLIENTS
+    if (wasAnswered && tenantId && clientId) {
+      await dynamoDB.send(
+        new UpdateCommand({
+          TableName: TABLE_CLIENTS,
+          Key: {
+            tenantId: String(tenantId).trim(),
+            clientId: String(clientId).trim(),
+          },
+          UpdateExpression: "SET #st = :s, updatedAt = :u",
+          ExpressionAttributeNames: { "#st": "status" },
+          ExpressionAttributeValues: {
+            ":s": negotiationStatus,
+            ":u": new Date().toISOString(),
+          },
+        }),
+      );
+    }
+
+    // 3. DESCUENTO DE MINUTOS
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
       );
+
       if (user) {
         const finalMinutes =
           Math.floor(Number(user.availableMinutes || 0)) - minutesToSubtract;
@@ -225,6 +246,7 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
+    // 4. CREACIÓN DE TAREA SI HUBO RESUMEN
     if (wasAnswered && summary) {
       await dynamoDB.send(
         new PutCommand({
