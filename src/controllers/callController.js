@@ -100,13 +100,13 @@ exports.makeSmartCall = async (req, res) => {
                       type: "string",
                       enum: [
                         "NO_ANSWER",
-                        "INTERESTED",
-                        "INFO_SENT",
-                        "APPOINTMENT_SET",
-                        "DOCUMENTATION",
-                        "RESERVATION",
-                        "CREDIT_PENDING",
-                        "CLOSED_DEAL",
+                        "CONTACTO",
+                        "INFORMACION",
+                        "INTERES",
+                        "CITA",
+                        "NEGOCIACION",
+                        "CIERRE",
+                        "PERDIDA",
                       ],
                     },
                     progress: { type: "number" },
@@ -120,15 +120,22 @@ exports.makeSmartCall = async (req, res) => {
                   {
                     role: "system",
                     content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. Tu prioridad es escuchar al cliente y asesorarlo según el inventario disponible.
+                    
+                    ESTADOS Y PROGRESO:
+                    0. NO_ANSWER (0%): No contestó la llamada o cayó a buzón.
+                    1. CONTACTO (10%): Contestó y hubo saludo inicial exitoso.
+                    2. INFORMACION (30%): Se brindó detalle de vehículos o se enviará info.
+                    3. INTERES (50%): El cliente mostró interés real en modelos específicos.
+                    4. CITA (70%): Se agendó una visita física o prueba de manejo.
+                    5. NEGOCIACION (85%): Discutiendo formas de pago o créditos.
+                    6. CIERRE (100%): Venta confirmada.
+                    7. PERDIDA (0%): El cliente indica que ya no está interesado.
 
                     REGLAS DE ORO (PROHIBIDO FALLAR):
                     1. EMPATÍA Y SONDEO: No lances ofertas de inmediato. Saluda y pregunta: "¿Qué tipo de vehículo está buscando?" o "¿Para qué uso necesita el auto?". Escucha y luego ofrece.
                     2. BÚSQUEDA DE INVENTARIO: Cuando busques información, di: "Permítame un segundo reviso qué inventario tengo disponible para usted..." o "Déjeme verificar los modelos actuales...". ESTÁ PROHIBIDO decir la palabra "PDF" o "archivo".
                     3. NO COLGAR: Mantén la llamada activa siempre. Si el sistema tarda en darte la info de los archivos, di: "Sigo aquí buscando los detalles, un momento por favor". Nunca digas "callback" ni "error técnico".
                     4. PRECIOS: Di los precios en palabras. Ejemplo: 10.000.000 es "Diez millones de pesos". Nunca "uno cero cero...".
-                    
-                    5. STATUS DE PROGRESO:
-                    - NO_ANSWER: 0 | INTERESTED: 10 | INFO_SENT: 30 | APPOINTMENT_SET: 50 | DOCUMENTATION: 70 | RESERVATION: 80 | CREDIT_PENDING: 90 | CLOSED_DEAL: 100
                     
                     FLUJO DE CONVERSACIÓN:
                     1. SALUDO: ${tempGreeting} ${customer.fullName}.
@@ -141,13 +148,11 @@ exports.makeSmartCall = async (req, res) => {
                     2. CONFIRMA: "Perfecto, agendado para el [Día] a las [Hora]".
                     3. SOLO TRAS ESTA CONFIRMACIÓN, usa la herramienta 'create_task'.
                     
-                    DATOS TÉCNICOS OBLIGATORIOS PARA 'create_task':
+                    DATOS OBLIGATORIOS 'create_task':
                     - tenantId: "${tenantId}"
                     - clientId: "${customer.clientId}"
                     - customerName: "${customer.fullName}"
-                    - company: "${company}"
-                    
-                    ANTI-CONTESTADOR: Cuelga solo si escuchas el "beep" de buzón. Con humanos, no cuelgues hasta que ellos se despidan.`,
+                    - company: "${company}"`,
                   },
                 ],
                 tools: [
