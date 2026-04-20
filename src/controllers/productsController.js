@@ -1,11 +1,11 @@
 const docClient = require("../services/dynamo");
 const {
-  GetCommand,
   QueryCommand,
   PutCommand,
   DeleteCommand,
   UpdateCommand,
 } = require("@aws-sdk/lib-dynamodb");
+const crypto = require("crypto");
 
 const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS;
 
@@ -13,21 +13,20 @@ exports.createProduct = async (req, res) => {
   try {
     const {
       tenantId,
-      productId,
       name,
-      description,
       price,
-      colors,
-      productType,
-      vehicleData,
+      description,
+      categories,
+      status,
+      clientIds,
+      observations,
     } = req.body;
 
-    if (!tenantId || !productId) {
-      return res
-        .status(400)
-        .json({ error: "tenantId and productId are required" });
+    if (!tenantId) {
+      return res.status(400).json({ error: "tenantId is required" });
     }
 
+    const productId = crypto.randomUUID();
     const foodFilter = /food|restaurant|meal|menu|edible|comida|restaurante/i;
     const isFood = foodFilter.test(colors) || foodFilter.test(name);
     const colorValue = isFood ? "N/A" : colors || "N/A";
@@ -47,13 +46,16 @@ exports.createProduct = async (req, res) => {
 
     const newProduct = {
       tenantId: tenantId.trim(),
-      productId: productId.trim(),
+      productId: productId,
       name: (name || "N/A").trim(),
-      description: description || "",
       price: Number(price) || 0,
-      colors: colorValue,
+      description: description || "",
+      categories: categories || [],
+      status: status || "Activo",
       productType: productType || "General",
       ...vehicleFields,
+      clientIds: clientIds || [],
+      observations: observations || "",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -74,8 +76,9 @@ exports.createProduct = async (req, res) => {
 exports.getProductsByTenant = async (req, res) => {
   const { tenantId } = req.params;
   try {
-    if (!tenantId)
+    if (!tenantId) {
       return res.status(400).json({ error: "tenantId is required" });
+    }
 
     const command = new QueryCommand({
       TableName: TABLE_PRODUCTS,
