@@ -1,30 +1,25 @@
 const docClient = require("../services/dynamo");
-
 const {
   ScanCommand,
   PutCommand,
   DeleteCommand,
   UpdateCommand,
 } = require("@aws-sdk/lib-dynamodb");
-
 const { v4: uuidv4 } = require("uuid");
+
 const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS;
 
 exports.getAllClients = async (req, res) => {
   let { tenantId } = req.query;
-
   try {
     if (!tenantId)
       return res.status(400).json({ error: "El tenantId es requerido" });
-
     const command = new ScanCommand({
       TableName: TABLE_CLIENTS,
       FilterExpression: "tenantId = :t",
       ExpressionAttributeValues: { ":t": tenantId.trim() },
     });
-
     const response = await docClient.send(command);
-
     res.status(200).json(response.Items || []);
   } catch (error) {
     res.status(500).json({ error: "Error al obtener clientes" });
@@ -33,19 +28,15 @@ exports.getAllClients = async (req, res) => {
 
 exports.getClientCount = async (req, res) => {
   let { tenantId } = req.query;
-
   try {
     if (!tenantId) return res.status(400).json({ error: "tenantId requerido" });
-
     const command = new ScanCommand({
       TableName: TABLE_CLIENTS,
       FilterExpression: "tenantId = :t",
       ExpressionAttributeValues: { ":t": tenantId.trim() },
       Select: "COUNT",
     });
-
     const response = await docClient.send(command);
-
     res.status(200).json({ count: response.Count || 0 });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -76,9 +67,13 @@ exports.saveClient = async (req, res) => {
     if (!tenantId)
       return res.status(400).json({ error: "El tenantId es obligatorio" });
 
-    const channels = contactChannel || "Llamada";
+    const endChannels = Array.isArray(contactChannel)
+      ? contactChannel
+      : [contactChannel.toString().trim()];
 
-    const isCallActive = channels.toLowerCase().includes("llamada");
+    const isCallActive = endChannels.some((c) =>
+      c.toString().toLowerCase().includes("llamada"),
+    );
 
     const clientItem = {
       tenantId: tenantId.trim(),
@@ -94,7 +89,7 @@ exports.saveClient = async (req, res) => {
       priority: priority || "Media",
       mainInterest: mainInterest || "",
       nextStep: nextStep || "",
-      contactChannel: channels,
+      contactChannel: endChannels,
       notes: notes || "",
       call_active: isCallActive,
       updatedAt: new Date().toISOString(),
@@ -135,15 +130,17 @@ exports.updateBasicInfo = async (req, res) => {
         .status(400)
         .json({ error: "tenantId y clientId son requeridos" });
 
-    const channels = contactChannel || "Llamada";
+    const endChannels = Array.isArray(contactChannel)
+      ? contactChannel
+      : [contactChannel ? contactChannel.toString().trim() : "Llamada"];
 
-    const isCallActive = channels.toLowerCase().includes("llamada");
+    const isCallActive = endChannels.some((c) =>
+      c.toString().toLowerCase().includes("llamada"),
+    );
 
     const command = new UpdateCommand({
       TableName: TABLE_CLIENTS,
-
       Key: { tenantId: tenantId.trim(), clientId: clientId.trim() },
-
       UpdateExpression: `set
         fullName = :n,
         phone = :p,
@@ -159,9 +156,7 @@ exports.updateBasicInfo = async (req, res) => {
         notes = :nt,
         call_active = :ca,
         updatedAt = :u`,
-
       ExpressionAttributeNames: { "#st": "status" },
-
       ExpressionAttributeValues: {
         ":n": (fullName || "N/A").trim(),
         ":p": phone ? Number(phone) : 0,
@@ -173,17 +168,15 @@ exports.updateBasicInfo = async (req, res) => {
         ":pr": priority || "Media",
         ":mi": mainInterest || "",
         ":ns": nextStep || "",
-        ":cc": channels,
+        ":cc": endChannels,
         ":nt": notes || "",
         ":ca": isCallActive,
         ":u": new Date().toISOString(),
       },
-
       ReturnValues: "ALL_NEW",
     });
 
     const response = await docClient.send(command);
-
     res.status(200).json(response.Attributes);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -193,7 +186,6 @@ exports.updateBasicInfo = async (req, res) => {
 exports.deleteClient = async (req, res) => {
   try {
     const { tenantId, clientId } = req.params;
-
     if (!tenantId || !clientId)
       return res
         .status(400)
@@ -202,14 +194,12 @@ exports.deleteClient = async (req, res) => {
     await docClient.send(
       new DeleteCommand({
         TableName: TABLE_CLIENTS,
-
         Key: {
           tenantId: String(tenantId).trim(),
           clientId: String(clientId).trim(),
         },
       }),
     );
-
     res.status(200).json({ message: "Cliente eliminado correctamente" });
   } catch (error) {
     res.status(500).json({ error: error.message });

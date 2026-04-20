@@ -42,10 +42,11 @@ exports.updatePrompt = async (req, res) => {
       .json({ message: "tenantId y systemPrompt son requeridos." });
   }
   try {
-    const finalPrompt = Array.isArray(systemPrompt)
+    const endPrompt = Array.isArray(systemPrompt)
       ? systemPrompt
       : [systemPrompt.toString().trim()];
-    console.log("LOG: updatePrompt PROCESANDO - finalPrompt:", finalPrompt);
+
+    console.log("LOG: updatePrompt PROCESANDO - endPrompt:", endPrompt);
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -53,7 +54,7 @@ exports.updatePrompt = async (req, res) => {
         UpdateExpression:
           "SET systemPrompt = :p, updatedAt = :u, tenantId = :t, company = :c, ownerEmail = :e",
         ExpressionAttributeValues: {
-          ":p": finalPrompt,
+          ":p": endPrompt,
           ":u": new Date().toISOString(),
           ":t": tenantId,
           ":c": company || "",

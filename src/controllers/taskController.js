@@ -151,6 +151,8 @@ exports.handleVapiWebhook = async (req, res) => {
     const clientId = call?.metadata?.clientId;
     const customerName = call?.customer?.name || "Cliente";
 
+    const globalInteractionDate = new Date().toISOString();
+
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
@@ -183,7 +185,7 @@ exports.handleVapiWebhook = async (req, res) => {
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
 
-    // 1. REGISTRO EN HISTORIAL
+    // 1. REGISTRO EN HISTORIAL LLAMADAS
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -196,7 +198,7 @@ exports.handleVapiWebhook = async (req, res) => {
           phone: call?.customer?.number || "N/A",
           duration: formatDuration(rawDuration),
           cost: Math.round((rawCost + Number.EPSILON) * 100) / 100,
-          timestamp: new Date().toISOString(),
+          timestamp: globalInteractionDate,
           summary: wasAnswered
             ? summary || "Llamada finalizada"
             : `No contestada: ${endedReason}`,
@@ -220,7 +222,8 @@ exports.handleVapiWebhook = async (req, res) => {
           ExpressionAttributeNames: { "#st": "status" },
           ExpressionAttributeValues: {
             ":s": negotiationStatus,
-            ":u": new Date().toISOString(),
+            ":p": progress,
+            ":u": globalInteractionDate,
           },
         }),
       );
@@ -260,10 +263,11 @@ exports.handleVapiWebhook = async (req, res) => {
             title: `📞 Llamada: ${customerName}`,
             description: summary,
             isCompleted: false,
-            createdAt: new Date().toISOString(),
-            source: "Vapi Webhook",
+            createdAt: globalInteractionDate,
+            lastInteraction: globalInteractionDate,
             status: negotiationStatus,
             progress: progress,
+            source: "Vapi Webhook",
           },
         }),
       );
