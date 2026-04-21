@@ -152,6 +152,12 @@ exports.makeSmartCall = async (req, res) => {
                     
                     CONTEXTO TEMPORAL: Hoy es ${fechaHoy}.
                     
+                    RACIOCINIO DE PRODUCTOS E INVENTARIO:
+                    - Tienes la capacidad de entender variaciones fonéticas o errores de escritura en los modelos de autos. 
+                    - Si un cliente menciona "toyotas", entiende que se refiere a "Toyota".
+                    - Si mencionan "sparkt jt" o "spark uiti", reconoce que se refiere al modelo "Chevrolet Spark". 
+                    - Tu lógica debe asociar cualquier nombre mal escrito con el producto más lógico y cercano del inventario de ${company}.
+                    
                     ESTADOS Y PROGRESO (ESCALA OBLIGATORIA):
                     0. No_contesto (0%): No contestó la llamada o cayó a buzón.
                     1. Contacto (10%): Contestó y hubo saludo inicial exitoso.

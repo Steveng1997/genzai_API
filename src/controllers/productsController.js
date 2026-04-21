@@ -7,10 +7,26 @@ const {
   UpdateCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const crypto = require("crypto");
+const path = require("path");
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET_NAME = process.env.S3_BUCKET_PRODUCTS;
 const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS;
+
+const getContentType = (fileName) => {
+  const ext = path.extname(fileName).toLowerCase();
+  switch (ext) {
+    case ".pdf":
+      return "application/pdf";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    default:
+      return "application/octet-stream";
+  }
+};
 
 exports.createProduct = async (req, res) => {
   try {
@@ -19,36 +35,42 @@ exports.createProduct = async (req, res) => {
       name,
       price,
       description,
-      categories,
+      category,
       status,
-      clientIds,
+      inventory,
       observations,
       productType,
       vehicleData,
       colors,
-      fileBase64,
-      fileName,
+      files,
     } = req.body;
 
     if (!tenantId) {
       return res.status(400).json({ error: "tenantId is required" });
     }
 
-    let imageUrl = null;
-    if (fileBase64 && fileName) {
-      const buffer = Buffer.from(fileBase64, "base64");
-      const fileKey = `products/${tenantId}/${crypto.randomUUID()}-${fileName}`;
+    let fileUrls = [];
+    if (files && Array.isArray(files)) {
+      for (const file of files) {
+        if (file.fileBase64 && file.fileName) {
+          const buffer = Buffer.from(file.fileBase64, "base64");
+          const fileKey = `products/${tenantId}/${crypto.randomUUID()}-${file.fileName}`;
+          const contentType = getContentType(file.fileName);
 
-      await s3Client.send(
-        new PutObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: fileKey,
-          Body: buffer,
-          ContentType: "image/jpeg",
-        }),
-      );
+          await s3Client.send(
+            new PutObjectCommand({
+              Bucket: BUCKET_NAME,
+              Key: fileKey,
+              Body: buffer,
+              ContentType: contentType,
+            }),
+          );
 
-      imageUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileKey}`;
+          fileUrls.push(
+            `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileKey}`,
+          );
+        }
+      }
     }
 
     const productId = crypto.randomUUID();
@@ -76,14 +98,14 @@ exports.createProduct = async (req, res) => {
       name: (name || "N/A").trim(),
       price: Number(price) || 0,
       description: description || "",
-      categories: categories || [],
+      category: category || "General",
       status: status || "Activo",
+      inventory: Number(inventory) || 0,
       productType: productType || "General",
       color: colorValue,
       ...vehicleFields,
-      clientIds: clientIds || [],
       observations: observations || "",
-      imageUrl: imageUrl,
+      fileUrls: fileUrls,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
