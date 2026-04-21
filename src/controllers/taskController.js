@@ -226,6 +226,12 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
+    console.log(
+      `El valor de del tenantId al actualizar el cliente ${tenantId}`,
+    );
+    console.log(
+      `El valor de del clientId al actualizar el cliente ${clientId}`,
+    );
     // 2. Actualizar Cliente
     if (tenantId && clientId) {
       console.log(`Ejecutando: Actualizar Cliente ${clientId}...`);
@@ -262,7 +268,10 @@ exports.handleVapiWebhook = async (req, res) => {
       );
     }
 
-    console.log(`El valor de wasAnswered al descontar los minutos ${wasAnswered}`);
+    console.log(`El valor de del correo al descontar los minutos ${userEmail}`);
+    console.log(
+      `El valor de wasAnswered al descontar los minutos ${wasAnswered}`,
+    );
     // 3. Descontar Minutos
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       console.log(`Ejecutando: Descontar minutos a ${userEmail}...`);
@@ -283,6 +292,7 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
+    console.log(`El valor de del tenantId al crear la tarea ${tenantId}`);
     console.log(`El valor de wasAnswered al crear la tarea ${wasAnswered}`);
     // 4. Crear Tarea de Seguimiento
     if (tenantId && (wasAnswered || analysis?.structuredData?.status)) {
