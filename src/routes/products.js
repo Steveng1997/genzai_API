@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const productController = require("../controllers/productController");
+const productController = require("../controllers/productsController");
 
 router.post("/save", productController.createProduct);
 router.get("/tenant/:tenantId", productController.getProductsByTenant);
