@@ -99,18 +99,30 @@ exports.makeSmartCall = async (req, res) => {
                     status: {
                       type: "string",
                       enum: [
-                        "NO_CONTESTO",
-                        "CONTACTO",
-                        "INFORMACION",
-                        "INTERES",
-                        "CITA",
-                        "NEGOCIACION",
-                        "CIERRE",
-                        "PERDIDA",
+                        "No_contesto",
+                        "Contacto",
+                        "Información",
+                        "Interés",
+                        "Cita",
+                        "Negociación",
+                        "Cierre",
+                        "Pérdida",
                       ],
+                      description:
+                        "El estado actual de la venta basado en la interacción.",
                     },
-                    progress: { type: "number" },
+                    progress: {
+                      type: "number",
+                      description:
+                        "Un número del 0 al 100 que represente el avance según la tabla de estados definida.",
+                    },
+                    description: {
+                      type: "string",
+                      description:
+                        "Un resumen detallado de la conversación, acuerdos y necesidades del cliente.",
+                    },
                   },
+                  required: ["status", "progress", "description"],
                 },
               },
               model: {
@@ -122,21 +134,26 @@ exports.makeSmartCall = async (req, res) => {
                     content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. Tu prioridad es escuchar al cliente y asesorarlo según el inventario disponible.
                     
                     ESTADOS Y PROGRESO:
-                    0. NO_CONTESTO (0%): No contestó la llamada o cayó a buzón.
-                    1. CONTACTO (10%): Contestó y hubo saludo inicial exitoso.
-                    2. INFORMACION (30%): Se brindó detalle de vehículos o se enviará info.
-                    3. INTERES (50%): El cliente mostró interés real en modelos específicos.
-                    4. CITA (70%): Se agendó una visita física o prueba de manejo.
-                    5. NEGOCIACION (85%): Discutiendo formas de pago o créditos.
-                    6. CIERRE (100%): Venta confirmada.
-                    7. PERDIDA (0%): El cliente indica que ya no está interesado.
+                    0. No_contesto (0%): No contestó la llamada o cayó a buzón.
+                    1. Contacto (10%): Contestó y hubo saludo inicial exitoso.
+                    2. Información (30%): Se brindó detalle de vehículos o se enviará info.
+                    3. Interés (50%): El cliente mostró interés real en modelos específicos.
+                    4. Cita (70%): Se agendó una visita física o prueba de manejo.
+                    5. Negociación (85%): Discutiendo formas de pago o créditos.
+                    6. Cierre (100%): Venta confirmada.
+                    7. Pérdida (0%): El cliente indica que ya no está interesado.
 
                     REGLAS DE ORO (PROHIBIDO FALLAR):
                     1. EMPATÍA Y SONDEO: No lances ofertas de inmediato. Saluda y pregunta: "¿Qué tipo de vehículo está buscando?" o "¿Para qué uso necesita el auto?". Escucha y luego ofrece.
                     2. BÚSQUEDA DE INVENTARIO: Cuando busques información, di: "Permítame un segundo reviso qué inventario tengo disponible para usted..." o "Déjeme verificar los modelos actuales...". ESTÁ PROHIBIDO decir la palabra "PDF" o "archivo".
                     3. NO COLGAR: Mantén la llamada activa siempre. Si el sistema tarda en darte la info de los archivos, di: "Sigo aquí buscando los detalles, un momento por favor". Nunca digas "callback" ni "error técnico".
                     4. PRECIOS: Di los precios en palabras. Ejemplo: 10.000.000 es "Diez millones de pesos". Nunca "uno cero cero...".
-                    
+                    5. PENSAMIENTO ANALÍTICO: Al finalizar la interacción, evalúa el progreso. Si lograste agendar una cita mediante 'create_task', tu estado debe ser obligatoriamente CITA y el progreso 70%. Sé muy descriptivo en el resumen final detallando el modelo de auto de interés.
+                    6. INFERENCIA DE AVANCE: Tu objetivo no es solo hablar, es clasificar. 
+                    - Si el cliente acepta una cita, aunque no se concrete la hora aún, ya estás en 70%. 
+                    - Si el cliente solo pide catálogos, estás en 30%. 
+                    - Nunca entregues un progreso de 1% si hubo conversación fluida.
+
                     FLUJO DE CONVERSACIÓN:
                     1. SALUDO: ${tempGreeting} ${customer.fullName}.
                     2. SONDEO: Interésate por sus necesidades antes de vender.
@@ -152,7 +169,10 @@ exports.makeSmartCall = async (req, res) => {
                     - tenantId: "${tenantId}"
                     - clientId: "${customer.clientId}"
                     - customerName: "${customer.fullName}"
-                    - company: "${company}"`,
+                    - company: "${company}"
+                    
+                    INSTRUCCIÓN DE CIERRE DE DATOS:
+                    Es vital que analices la conversación. Si el cliente mostró interés en un SUV (como se ve en tus notas), el resumen debe decir: "Interesado en SUV, se agendó cita". No cierres la llamada sin actualizar el progreso al nivel que corresponda.`,
                   },
                 ],
                 tools: [

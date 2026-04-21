@@ -9,7 +9,7 @@ const dynamoDB = require("../services/dynamo");
 const TABLE_TASKS = process.env.DYNAMODB_TABLE_TASK;
 const TABLE_HISTORY = process.env.DYNAMODB_TABLE_HISTORY;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
-const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_CLIENTS;
+const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_LEADS;
 
 const formatDuration = (seconds) => {
   if (!seconds || seconds <= 0) return "0:00";
@@ -20,14 +20,14 @@ const formatDuration = (seconds) => {
 
 const getNextStep = (currentStatus) => {
   const steps = {
-    NO_CONTESTO: "REINTENTAR LLAMADA",
-    CONTACTO: "BRINDAR INFORMACION",
-    INFORMACION: "IDENTIFICAR INTERES",
-    INTERES: "AGENDAR CITA",
-    CITA: "INICIAR NEGOCIACION",
-    NEGOCIACION: "CERRAR VENTA",
-    CIERRE: "VENTA FINALIZADA",
-    PERDIDA: "NINGUNO",
+    No_contesto: "Reintentar llamada",
+    Contacto: "Brindar información",
+    Información: "Identificar interés",
+    Interes: "Agendar cita",
+    Cita: "Iniciar negociación",
+    Negociación: "Cerrar venta",
+    Cierre: "venta finalizada",
+    Pérdida: "Ninguno",
   };
   return steps[currentStatus] || "SIN DEFINIR";
 };
@@ -175,27 +175,29 @@ exports.handleVapiWebhook = async (req, res) => {
     let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
 
     // Sobrescritura por IA
-    if (analysis?.structuredData?.status === "NO_CONTESTO") {
-      console.log("La IA marcó la llamada como NO_CONTESTO.");
+    if (analysis?.structuredData?.status === "No_contesto") {
+      console.log("La IA marcó la llamada como No_contesto.");
       wasAnswered = false;
     }
 
     const statusMap = {
-      NO_ANSWER: "NO_CONTESTO",
-      CONTACT: "CONTACTO",
-      INFORMATION: "INFORMACION",
-      INTERESTED: "INTERES",
-      APPOINTMENT: "CITA",
-      NEGOTIATION: "NEGOCIACION",
-      CLOSED: "CIERRE",
-      LOST: "PERDIDA",
+      No_contesto: "No_contesto",
+      Contacto: "Contacto",
+      Información: "Información",
+      Interes: "Interes",
+      Cita: "Cita",
+      Negociación: "Negociación",
+      Cierre: "Cierre",
+      Pérdida: "Pérdida",
     };
 
     let negotiationStatus =
       statusMap[analysis?.structuredData?.status] ||
-      (wasAnswered ? "CONTACTO" : "NO_CONTESTO");
+      (wasAnswered ? "Contacto" : "No_contesto");
+
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
+      
     const nextStep = getNextStep(negotiationStatus);
     const minutesToSubtract = Math.round(rawDuration / 60);
 
