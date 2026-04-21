@@ -28,6 +28,27 @@ const getContentType = (fileName) => {
   }
 };
 
+exports.countProductsByTenant = async (req, res) => {
+  const { tenantId } = req.params;
+  try {
+    if (!tenantId) {
+      return res.status(400).json({ error: "tenantId is required" });
+    }
+
+    const command = new QueryCommand({
+      TableName: TABLE_PRODUCTS,
+      KeyConditionExpression: "tenantId = :tId",
+      ExpressionAttributeValues: { ":tId": tenantId.trim() },
+      Select: "COUNT",
+    });
+
+    const data = await docClient.send(command);
+    res.status(200).json({ count: data.Count || 0 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.createProduct = async (req, res) => {
   try {
     const {
