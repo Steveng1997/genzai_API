@@ -1,4 +1,5 @@
 const docClient = require("../services/dynamo");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const {
   QueryCommand,
   PutCommand,
@@ -7,6 +8,8 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const crypto = require("crypto");
 
+const s3Client = new S3Client({ region: process.env.AWS_REGION });
+const BUCKET_NAME = process.env.S3_BUCKET_PRODUCTS;
 const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS;
 
 exports.createProduct = async (req, res) => {
@@ -20,21 +23,44 @@ exports.createProduct = async (req, res) => {
       status,
       clientIds,
       observations,
+      productType,
+      vehicleData,
+      colors,
+      fileBase64,
+      fileName,
     } = req.body;
 
     if (!tenantId) {
       return res.status(400).json({ error: "tenantId is required" });
     }
 
+    let imageUrl = null;
+    if (fileBase64 && fileName) {
+      const buffer = Buffer.from(fileBase64, "base64");
+      const fileKey = `products/${tenantId}/${crypto.randomUUID()}-${fileName}`;
+
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: fileKey,
+          Body: buffer,
+          ContentType: "image/jpeg",
+        }),
+      );
+
+      imageUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileKey}`;
+    }
+
     const productId = crypto.randomUUID();
     const foodFilter = /food|restaurant|meal|menu|edible|comida|restaurante/i;
-    const isFood = foodFilter.test(colors) || foodFilter.test(name);
+    const isFood =
+      (colors && foodFilter.test(colors)) || (name && foodFilter.test(name));
     const colorValue = isFood ? "N/A" : colors || "N/A";
 
     let vehicleFields = {};
     const vehicleTypes = ["auto", "vehicle", "car", "coche", "carro"];
 
-    if (vehicleTypes.includes(productType?.toLowerCase())) {
+    if (productType && vehicleTypes.includes(productType.toLowerCase())) {
       vehicleFields = {
         brand: vehicleData?.brand || "N/A",
         reference: vehicleData?.reference || "N/A",
@@ -53,9 +79,11 @@ exports.createProduct = async (req, res) => {
       categories: categories || [],
       status: status || "Activo",
       productType: productType || "General",
+      color: colorValue,
       ...vehicleFields,
       clientIds: clientIds || [],
       observations: observations || "",
+      imageUrl: imageUrl,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
