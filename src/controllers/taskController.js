@@ -106,11 +106,6 @@ exports.handleRileyTool = async (req, res) => {
 
     if (!toolCall) return res.status(400).json({ error: "No tool call data" });
 
-    const args =
-      typeof toolCall.function.arguments === "string"
-        ? JSON.parse(toolCall.function.arguments)
-        : toolCall.function.arguments;
-
     return res.status(200).json({
       results: [
         {
@@ -125,7 +120,7 @@ exports.handleRileyTool = async (req, res) => {
   }
 };
 
-// --- HANDLE VAPI WEBHOOK (CRITICAL SECTION) ---
+// --- HANDLE VAPI WEBHOOK ---
 exports.handleVapiWebhook = async (req, res) => {
   console.log("--- INICIO WEBHOOK VAPI ---");
 
@@ -135,28 +130,17 @@ exports.handleVapiWebhook = async (req, res) => {
   }
 
   const payload = req.body.message || req.body;
-  console.log("Tipo de Payload:", payload.type);
-
   if (payload.type !== "end-of-call-report") {
     return res.status(200).json({ message: "Ignorado" });
   }
 
   try {
     const { call, summary: vapiSummary, analysis } = payload;
-
-    // Log de Metadata - AQUÍ ES DONDE SUELE FALLAR
     const metadata = call?.metadata || {};
-    console.log("Metadata extraída:", JSON.stringify(metadata, null, 2));
-
     const tenantId = metadata.tenantId;
     const clientId = metadata.clientId;
-    const company = metadata.company;
     const userEmail = metadata.email;
     const customerName = call?.customer?.name || "Cliente";
-
-    console.log(
-      `IDs detectados -> tenantId: ${tenantId}, clientId: ${clientId}`,
-    );
 
     const globalInteractionDate = new Date().toISOString();
     const rawDuration = Number(
@@ -165,6 +149,7 @@ exports.handleVapiWebhook = async (req, res) => {
     const rawCost = Number(call?.cost || payload.cost || 0);
     const endedReason = call?.endedReason || "";
 
+    // Lógica técnica básica (Solo para historial y minutos)
     const failureReasons = [
       "voicemail",
       "no-answer",
@@ -172,43 +157,26 @@ exports.handleVapiWebhook = async (req, res) => {
       "failed",
       "declined",
     ];
-    let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
+    const wasAnswered =
+      !failureReasons.includes(endedReason) && rawDuration > 10;
 
-    // Sobrescritura por IA
-    if (analysis?.structuredData?.status === "No_contesto") {
-      console.log("La IA marcó la llamada como No_contesto.");
-      wasAnswered = false;
-    }
+    // --- LÓGICA BASADA EN IA (Riley) ---
+    const structured = analysis?.structuredData || {};
 
-    const statusMap = {
-      No_contesto: "No_contesto",
-      Contacto: "Contacto",
-      Información: "Información",
-      Interes: "Interes",
-      Cita: "Cita",
-      Negociación: "Negociación",
-      Cierre: "Cierre",
-      Pérdida: "Pérdida",
-    };
+    // Si Riley no entrega un estado, por defecto es "No_contesto"
+    const negotiationStatus = structured.status || "No_contesto";
 
-    let negotiationStatus =
-      statusMap[analysis?.structuredData?.status] ||
-      (wasAnswered ? "Contacto" : "No_contesto");
+    // Si Riley no entrega progreso, por defecto es 0
+    const progress = Number(structured.progress || 0);
 
-    const progress =
-      analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
-      
     const nextStep = getNextStep(negotiationStatus);
-    const minutesToSubtract = Math.round(rawDuration / 60);
-
-    const finalSummaryText = wasAnswered
-      ? vapiSummary || "Llamada contestada sin resumen detallado."
-      : `Llamada no exitosa. Motivo: ${endedReason}`;
-
-    console.log(`Estado final: ${negotiationStatus}, Answered: ${wasAnswered}`);
+    const finalSummaryText =
+      structured.resumen ||
+      structured.description ||
+      vapiSummary ||
+      "Sin resumen disponible.";
 
     // 1. Guardar en Historial
-    console.log("Ejecutando: Guardar Historial...");
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -217,7 +185,7 @@ exports.handleVapiWebhook = async (req, res) => {
           tenantId: tenantId ? String(tenantId).trim() : "SIN_TENANT",
           clientId: clientId ? String(clientId).trim() : "N/A",
           customerName,
-          company: company || "N/A",
+          company: metadata.company || "N/A",
           phone: call?.customer?.number || "N/A",
           duration: formatDuration(rawDuration),
           cost: Math.round((rawCost + Number.EPSILON) * 100) / 100,
@@ -228,59 +196,38 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
-    console.log(
-      `El valor de del tenantId al actualizar el cliente ${tenantId}`,
-    );
-    console.log(
-      `El valor de del clientId al actualizar el cliente ${clientId}`,
-    );
     // 2. Actualizar Cliente
     if (tenantId && clientId) {
-      console.log(`Ejecutando: Actualizar Cliente ${clientId}...`);
-      await dynamoDB
-        .send(
-          new UpdateCommand({
-            TableName: TABLE_CLIENTS,
-            Key: {
-              tenantId: String(tenantId).trim(),
-              clientId: String(clientId).trim(),
-            },
-            UpdateExpression:
-              "SET #st = :s, #pr = :p, #nx = :n, updatedAt = :u",
-            ExpressionAttributeNames: {
-              "#st": "status",
-              "#pr": "progress",
-              "#nx": "nextStep",
-            },
-            ExpressionAttributeValues: {
-              ":s": negotiationStatus,
-              ":p": progress,
-              ":n": nextStep,
-              ":u": globalInteractionDate,
-            },
-          }),
-        )
-        .then(() => console.log("Cliente actualizado con éxito."))
-        .catch((err) =>
-          console.error("Error actualizando cliente:", err.message),
-        );
-    } else {
-      console.warn(
-        "Saltando actualización de cliente: tenantId o clientId faltantes.",
+      await dynamoDB.send(
+        new UpdateCommand({
+          TableName: TABLE_CLIENTS,
+          Key: {
+            tenantId: String(tenantId).trim(),
+            clientId: String(clientId).trim(),
+          },
+          UpdateExpression: "SET #st = :s, #pr = :p, #nx = :n, updatedAt = :u",
+          ExpressionAttributeNames: {
+            "#st": "status",
+            "#pr": "progress",
+            "#nx": "nextStep",
+          },
+          ExpressionAttributeValues: {
+            ":s": negotiationStatus,
+            ":p": progress,
+            ":n": nextStep,
+            ":u": globalInteractionDate,
+          },
+        }),
       );
     }
 
-    console.log(`El valor de del correo al descontar los minutos ${userEmail}`);
-    console.log(
-      `El valor de wasAnswered al descontar los minutos ${wasAnswered}`,
-    );
-    // 3. Descontar Minutos
+    // 3. Descontar Minutos (Uso técnico de wasAnswered)
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
-      console.log(`Ejecutando: Descontar minutos a ${userEmail}...`);
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
       );
       if (user) {
+        const minutesToSubtract = Math.round(rawDuration / 60);
         const finalMinutes =
           Math.floor(Number(user.availableMinutes || 0)) - minutesToSubtract;
         await dynamoDB.send(
@@ -294,46 +241,35 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
-    console.log(`El valor de del tenantId al crear la tarea ${tenantId}`);
-    console.log(`El valor de wasAnswered al crear la tarea ${wasAnswered}`);
     // 4. Crear Tarea de Seguimiento
-    if (tenantId && (wasAnswered || analysis?.structuredData?.status)) {
-      console.log("Ejecutando: Crear Tarea de Seguimiento...");
-      await dynamoDB
-        .send(
-          new PutCommand({
-            TableName: TABLE_TASKS,
-            Item: {
-              taskId: Date.now(),
-              tenantId: String(tenantId).trim(),
-              clientId: clientId ? String(clientId).trim() : "N/A",
-              customerName: customerName,
-              company: company || "N/A",
-              title: `📞 Seguimiento: ${customerName}`,
-              description: finalSummaryText,
-              isCompleted: false,
-              createdAt: globalInteractionDate,
-              lastInteraction: globalInteractionDate,
-              status: negotiationStatus,
-              progress: progress,
-              nextStep: nextStep,
-              source: "Vapi Webhook",
-            },
-          }),
-        )
-        .then(() => console.log("Tarea creada con éxito."))
-        .catch((err) => console.error("Error creando tarea:", err.message));
-    } else {
-      console.warn(
-        "Condición de tarea no cumplida (Answered false o falta TenantId).",
+    if (tenantId) {
+      await dynamoDB.send(
+        new PutCommand({
+          TableName: TABLE_TASKS,
+          Item: {
+            taskId: Date.now(),
+            tenantId: String(tenantId).trim(),
+            clientId: clientId ? String(clientId).trim() : "N/A",
+            customerName,
+            company: metadata.company || "N/A",
+            title: `📞 Seguimiento: ${customerName}`,
+            description: finalSummaryText,
+            isCompleted: false,
+            createdAt: globalInteractionDate,
+            lastInteraction: globalInteractionDate,
+            status: negotiationStatus,
+            progress: progress,
+            nextStep: nextStep,
+            source: "Vapi Webhook",
+          },
+        }),
       );
     }
 
     console.log("--- WEBHOOK FINALIZADO CON ÉXITO ---");
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("!!! ERROR CRÍTICO EN WEBHOOK !!!");
-    console.error(error);
+    console.error("!!! ERROR CRÍTICO EN WEBHOOK !!!", error);
     return res.status(500).json({ error: error.message });
   }
 };
