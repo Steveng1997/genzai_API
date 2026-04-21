@@ -9,12 +9,27 @@ const dynamoDB = require("../services/dynamo");
 const TABLE_TASKS = process.env.DYNAMODB_TABLE_TASK;
 const TABLE_HISTORY = process.env.DYNAMODB_TABLE_HISTORY;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
+const TABLE_CLIENTS = process.env.DYNAMODB_TABLE_CLIENTS;
 
 const formatDuration = (seconds) => {
   if (!seconds || seconds <= 0) return "0:00";
   const mins = Math.floor(seconds / 60);
   const secs = Math.round(seconds % 60);
   return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+};
+
+const getNextStep = (currentStatus) => {
+  const steps = {
+    NO_CONTESTO: "REINTENTAR LLAMADA",
+    CONTACTO: "BRINDAR INFORMACION",
+    INFORMACION: "IDENTIFICAR INTERES",
+    INTERES: "AGENDAR CITA",
+    CITA: "INICIAR NEGOCIACION",
+    NEGOCIACION: "CERRAR VENTA",
+    CIERRE: "VENTA FINALIZADA",
+    PERDIDA: "NINGUNO",
+  };
+  return steps[currentStatus] || "SIN DEFINIR";
 };
 
 exports.getTasks = async (req, res) => {
@@ -57,9 +72,7 @@ exports.completeTask = async (req, res) => {
   const { taskId, isCompleted, tenantId } = req.body;
   try {
     if (!tenantId || !taskId) {
-      return res
-        .status(400)
-        .json({ error: "Faltan parámetros: tenantId o taskId" });
+      return res.status(400).json({ error: "Faltan parámetros" });
     }
     await dynamoDB.send(
       new UpdateCommand({
@@ -84,7 +97,6 @@ exports.handleRileyTool = async (req, res) => {
 
   try {
     const payload = req.body.message || req.body;
-
     const toolCall =
       payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
 
@@ -110,9 +122,7 @@ exports.handleRileyTool = async (req, res) => {
       source: "Riley Assistant",
     };
 
-    if (!taskItem.tenantId) {
-      throw new Error("Missing tenantId in tool call or metadata");
-    }
+    if (!taskItem.tenantId) throw new Error("Missing tenantId");
 
     await dynamoDB.send(
       new PutCommand({
@@ -123,14 +133,10 @@ exports.handleRileyTool = async (req, res) => {
 
     return res.status(200).json({
       results: [
-        {
-          toolCallId: toolCall.id,
-          result: "Tarea agendada exitosamente en el sistema.",
-        },
+        { toolCallId: toolCall.id, result: "Tarea agendada exitosamente." },
       ],
     });
   } catch (e) {
-    console.error("Error en handleRileyTool:", e.message);
     return res.status(500).json({ error: e.message });
   }
 };
@@ -144,7 +150,7 @@ exports.handleVapiWebhook = async (req, res) => {
     return res.status(200).json({ message: "Ignorado" });
 
   try {
-    const { call, summary, analysis } = payload;
+    const { call, summary: vapiSummary, analysis } = payload;
     const tenantId = call?.metadata?.tenantId;
     const company = call?.metadata?.company;
     const userEmail = call?.metadata?.email;
@@ -152,40 +158,49 @@ exports.handleVapiWebhook = async (req, res) => {
     const customerName = call?.customer?.name || "Cliente";
 
     const globalInteractionDate = new Date().toISOString();
-
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
     const rawCost = Number(call?.cost || payload.cost || 0);
-
     const endedReason = call?.endedReason || "";
 
-    // LISTA NEGRA DE MOTIVOS: Si la llamada terminó por estas razones, no fue contestada
     const failureReasons = [
       "voicemail",
       "no-answer",
       "busy",
       "failed",
-      "customer-hung-up-erearly", // Si cuelgan antes de que la IA hable
+      "customer-hung-up-erearly",
       "declined",
     ];
-
     let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
 
     if (analysis?.structuredData?.status === "NO_CONTESTO") {
       wasAnswered = false;
     }
 
-    const minutesToSubtract = Math.round(rawDuration / 60);
+    const statusMap = {
+      NO_ANSWER: "NO_CONTESTO",
+      CONTACT: "CONTACTO",
+      INFORMATION: "INFORMACION",
+      INTERESTED: "INTERES",
+      APPOINTMENT: "CITA",
+      NEGOTIATION: "NEGOCIACION",
+      CLOSED: "CIERRE",
+      LOST: "PERDIDA",
+    };
 
-    const negotiationStatus =
-      analysis?.structuredData?.status ||
-      (wasAnswered ? "INTERES" : "NO_CONTESTO");
-
+    let negotiationStatus =
+      statusMap[analysis?.structuredData?.status] ||
+      (wasAnswered ? "CONTACTO" : "NO_CONTESTO");
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
+    const nextStep = getNextStep(negotiationStatus);
+    const minutesToSubtract = Math.round(rawDuration / 60);
 
-    // 1. REGISTRO EN HISTORIAL LLAMADAS
+    const finalSummaryText = wasAnswered
+      ? vapiSummary || "Llamada contestada sin resumen detallado."
+      : `Llamada no exitosa. Motivo: ${endedReason}`;
+
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -199,18 +214,13 @@ exports.handleVapiWebhook = async (req, res) => {
           duration: formatDuration(rawDuration),
           cost: Math.round((rawCost + Number.EPSILON) * 100) / 100,
           timestamp: globalInteractionDate,
-          summary: wasAnswered
-            ? summary || "Llamada finalizada"
-            : `No contestada: ${endedReason}`,
+          summary: finalSummaryText,
           answered: wasAnswered,
-          status: wasAnswered ? negotiationStatus : "NO_CONTESTO",
-          progress: wasAnswered ? progress : 0,
         },
       }),
     );
 
-    // 2. ACTUALIZACIÓN DEL STATUS EN LA TABLA CLIENTS
-    if (wasAnswered && tenantId && clientId) {
+    if (tenantId && clientId) {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: TABLE_CLIENTS,
@@ -218,23 +228,26 @@ exports.handleVapiWebhook = async (req, res) => {
             tenantId: String(tenantId).trim(),
             clientId: String(clientId).trim(),
           },
-          UpdateExpression: "SET #st = :s, updatedAt = :u",
-          ExpressionAttributeNames: { "#st": "status" },
+          UpdateExpression: "SET #st = :s, #pr = :p, #nx = :n, updatedAt = :u",
+          ExpressionAttributeNames: {
+            "#st": "status",
+            "#pr": "progress",
+            "#nx": "nextStep",
+          },
           ExpressionAttributeValues: {
             ":s": negotiationStatus,
             ":p": progress,
+            ":n": nextStep,
             ":u": globalInteractionDate,
           },
         }),
       );
     }
 
-    // 3. DESCUENTO DE MINUTOS
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
       );
-
       if (user) {
         const finalMinutes =
           Math.floor(Number(user.availableMinutes || 0)) - minutesToSubtract;
@@ -249,8 +262,7 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
-    // 4. CREACIÓN DE TAREA SI HUBO RESUMEN
-    if (wasAnswered && summary) {
+    if (wasAnswered) {
       await dynamoDB.send(
         new PutCommand({
           TableName: TABLE_TASKS,
@@ -260,13 +272,14 @@ exports.handleVapiWebhook = async (req, res) => {
             clientId,
             customerName,
             company,
-            title: `📞 Llamada: ${customerName}`,
-            description: summary,
+            title: `📞 Seguimiento: ${customerName}`,
+            description: finalSummaryText,
             isCompleted: false,
             createdAt: globalInteractionDate,
             lastInteraction: globalInteractionDate,
             status: negotiationStatus,
             progress: progress,
+            nextStep: nextStep,
             source: "Vapi Webhook",
           },
         }),
