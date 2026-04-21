@@ -172,7 +172,7 @@ exports.handleVapiWebhook = async (req, res) => {
 
     let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
 
-    if (analysis?.structuredData?.status === "NO_ANSWER") {
+    if (analysis?.structuredData?.status === "NO_CONTESTO") {
       wasAnswered = false;
     }
 
@@ -180,7 +180,7 @@ exports.handleVapiWebhook = async (req, res) => {
 
     const negotiationStatus =
       analysis?.structuredData?.status ||
-      (wasAnswered ? "INTERESTED" : "NO_ANSWER");
+      (wasAnswered ? "INTERES" : "NO_CONTESTO");
 
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
@@ -203,7 +203,7 @@ exports.handleVapiWebhook = async (req, res) => {
             ? summary || "Llamada finalizada"
             : `No contestada: ${endedReason}`,
           answered: wasAnswered,
-          status: wasAnswered ? negotiationStatus : "NO_ANSWER",
+          status: wasAnswered ? negotiationStatus : "NO_CONTESTO",
           progress: wasAnswered ? progress : 0,
         },
       }),

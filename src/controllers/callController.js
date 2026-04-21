@@ -99,7 +99,7 @@ exports.makeSmartCall = async (req, res) => {
                     status: {
                       type: "string",
                       enum: [
-                        "NO_ANSWER",
+                        "NO_CONTESTO",
                         "CONTACTO",
                         "INFORMACION",
                         "INTERES",
@@ -122,7 +122,7 @@ exports.makeSmartCall = async (req, res) => {
                     content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. Tu prioridad es escuchar al cliente y asesorarlo según el inventario disponible.
                     
                     ESTADOS Y PROGRESO:
-                    0. NO_ANSWER (0%): No contestó la llamada o cayó a buzón.
+                    0. NO_CONTESTO (0%): No contestó la llamada o cayó a buzón.
                     1. CONTACTO (10%): Contestó y hubo saludo inicial exitoso.
                     2. INFORMACION (30%): Se brindó detalle de vehículos o se enviará info.
                     3. INTERES (50%): El cliente mostró interés real en modelos específicos.
