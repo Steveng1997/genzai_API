@@ -32,6 +32,28 @@ const getNextStep = (currentStatus) => {
   return steps[currentStatus] || "SIN DEFINIR";
 };
 
+const parseRelativeDate = (text) => {
+  if (!text || text === "No definida") return "No definida";
+  const lowerText = text.toLowerCase();
+  const now = new Date();
+  const colombiaTime = new Date(
+    now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
+  );
+
+  if (lowerText.includes("mañana")) {
+    colombiaTime.setDate(colombiaTime.getDate() + 1);
+    const day = colombiaTime.getDate().toString().padStart(2, "0");
+    const month = (colombiaTime.getMonth() + 1).toString().padStart(2, "0");
+    const year = colombiaTime.getFullYear();
+    const cleanTime = text
+      .replace(/mañana/gi, "")
+      .replace(/,/g, "")
+      .trim();
+    return `${year}-${month}-${day} ${cleanTime}`;
+  }
+  return text;
+};
+
 exports.getTasks = async (req, res) => {
   let { tenantId } = req.query;
   try {
@@ -137,7 +159,14 @@ exports.handleVapiWebhook = async (req, res) => {
     const toolCall = call?.toolCalls?.find(
       (t) => t.function.name === "create_task",
     );
-    const toolArgs = toolCall ? toolCall.function.arguments : {};
+
+    let toolArgs = {};
+    if (toolCall && toolCall.function.arguments) {
+      toolArgs =
+        typeof toolCall.function.arguments === "string"
+          ? JSON.parse(toolCall.function.arguments)
+          : toolCall.function.arguments;
+    }
 
     const globalInteractionDate = new Date().toISOString();
     const rawDuration = Number(
@@ -153,18 +182,17 @@ exports.handleVapiWebhook = async (req, res) => {
       "failed",
       "declined",
     ];
-
     const wasAnswered =
       !failureReasons.includes(endedReason) && rawDuration > 10;
 
     const structured = analysis?.structuredData || {};
     let negotiationStatus = structured.status || "No_contesto";
     let progress = Number(structured.progress || 0);
-
     const nextStep = getNextStep(negotiationStatus);
-
     const finalSummaryText =
       structured.description || vapiSummary || "Sin resumen disponible.";
+
+    const rawCita = toolArgs.cita || structured.cita || "No definida";
 
     await dynamoDB.send(
       new PutCommand({
@@ -251,7 +279,7 @@ exports.handleVapiWebhook = async (req, res) => {
             status: negotiationStatus,
             progress: progress,
             priority: structured.priority,
-            cita: toolArgs.cita || "No definida",
+            cita: parseRelativeDate(rawCita),
             nextStep: nextStep,
             source: "Vapi Webhook",
           },

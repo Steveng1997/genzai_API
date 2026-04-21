@@ -59,9 +59,11 @@ exports.makeSmartCall = async (req, res) => {
     }
 
     const now = new Date();
-    const colombiaHour = new Date(
+    const colombiaDateObj = new Date(
       now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
-    ).getHours();
+    );
+    const colombiaHour = colombiaDateObj.getHours();
+    const fechaHoy = colombiaDateObj.toISOString().split("T")[0];
 
     let tempGreeting = "Buenos días";
     if (colombiaHour >= 12 && colombiaHour < 18) tempGreeting = "Buenas tardes";
@@ -125,8 +127,19 @@ exports.makeSmartCall = async (req, res) => {
                       type: "string",
                       enum: ["Baja", "Media", "Alta"],
                     },
+                    cita: {
+                      type: "string",
+                      description:
+                        "La fecha y hora de la cita acordada (ej: Lunes 10am). Si no hay, poner 'No definida'.",
+                    },
                   },
-                  required: ["status", "progress", "description", "priority"],
+                  required: [
+                    "status",
+                    "progress",
+                    "description",
+                    "priority",
+                    "cita",
+                  ],
                 },
               },
               model: {
@@ -135,7 +148,9 @@ exports.makeSmartCall = async (req, res) => {
                 messages: [
                   {
                     role: "system",
-                    content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. Tu prioridad es escuchar al cliente y asesorarlo según el inventario disponible.
+                    content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. 
+                    
+                    CONTEXTO TEMPORAL: Hoy es ${fechaHoy}.
                     
                     ESTADOS Y PROGRESO (ESCALA OBLIGATORIA):
                     0. No_contesto (0%): No contestó la llamada o cayó a buzón.
@@ -154,7 +169,7 @@ exports.makeSmartCall = async (req, res) => {
                     4. PRECIOS: Di los precios en palabras (ej: "Diez millones de pesos").
                     5. ACTUALIZACIÓN DE ESTADO (CRÍTICO): Si el cliente pide agendar una cita o muestra disposición para ver el auto, tu estado DEBE ser CITA (70%) obligatoriamente.
                     6. LÓGICA HORARIA: La empresa opera de 7:00 a.m. a 6:00 p.m.
-    
+
                     PENSAMIENTO ANALÍTICO E INFERENCIA:
                     - Tu objetivo es clasificar el avance real. Si hubo conversación fluida, nunca entregues 1%.
                     - Si el cliente acepta una cita, aunque no se concrete la hora exacta aún, ya estás en 70%.
@@ -169,9 +184,10 @@ exports.makeSmartCall = async (req, res) => {
     
                     AGENDAMIENTO DE CITAS:
                     1. Pregunta DÍA y luego HORA.
-                    2. FORMATO CAMPO 'cita': "[Día], [Hora] [a.m./p.m.]". Ejemplo: "Martes, 3:00 p.m.".
-                    3. CONFIRMA con el cliente y luego usa la herramienta 'create_task'.
-    
+                    2. Si el cliente dice "mañana", calcula la fecha basándote en que hoy es ${fechaHoy}.
+                    3. FORMATO CAMPO 'cita': "[Día], [Hora] [a.m./p.m.]". Ejemplo: "Martes, 3:00 p.m.".
+                    4. CONFIRMA con el cliente y luego usa la herramienta 'create_task'. Es OBLIGATORIO usar la herramienta si se acuerda una cita.
+
                     INSTRUCCIÓN DE CIERRE DE DATOS:
                     Es vital que analices la conversación. El resumen en 'description' debe ser muy detallado (ej: "Interesado en SUV Mazda CX-5, se agendó cita para el miércoles"). No cierres sin actualizar el progreso al nivel más alto alcanzado.
     
