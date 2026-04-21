@@ -102,38 +102,19 @@ exports.handleRileyTool = async (req, res) => {
 
     if (!toolCall) return res.status(400).json({ error: "No tool call data" });
 
+    // Los args están aquí por si necesitas procesar algo específico de la IA en tiempo real
     const args =
       typeof toolCall.function.arguments === "string"
         ? JSON.parse(toolCall.function.arguments)
         : toolCall.function.arguments;
 
-    const metadata = payload.call?.metadata || {};
-
-    const taskItem = {
-      taskId: Date.now(),
-      tenantId: args.tenantId || metadata.tenantId,
-      clientId: args.clientId || metadata.clientId,
-      customerName: args.customerName || metadata.customerName || "Cliente",
-      company: args.company || metadata.company,
-      title: args.titulo || "Nueva Cita Agendada",
-      description: args.detalle || "Sin detalles adicionales",
-      isCompleted: false,
-      createdAt: new Date().toISOString(),
-      source: "Riley Assistant",
-    };
-
-    if (!taskItem.tenantId) throw new Error("Missing tenantId");
-
-    await dynamoDB.send(
-      new PutCommand({
-        TableName: TABLE_TASKS,
-        Item: taskItem,
-      }),
-    );
-
     return res.status(200).json({
       results: [
-        { toolCallId: toolCall.id, result: "Tarea agendada exitosamente." },
+        {
+          toolCallId: toolCall.id,
+          result:
+            "Información procesada. La tarea se creará al finalizar la llamada.",
+        },
       ],
     });
   } catch (e) {
@@ -151,10 +132,13 @@ exports.handleVapiWebhook = async (req, res) => {
 
   try {
     const { call, summary: vapiSummary, analysis } = payload;
-    const tenantId = call?.metadata?.tenantId;
-    const company = call?.metadata?.company;
-    const userEmail = call?.metadata?.email;
-    const clientId = call?.metadata?.clientId;
+
+    // Extraemos metadata directamente del payload del webhook
+    const metadata = call?.metadata || {};
+    const tenantId = metadata.tenantId;
+    const company = metadata.company;
+    const userEmail = metadata.email;
+    const clientId = metadata.clientId;
     const customerName = call?.customer?.name || "Cliente";
 
     const globalInteractionDate = new Date().toISOString();
@@ -169,14 +153,11 @@ exports.handleVapiWebhook = async (req, res) => {
       "no-answer",
       "busy",
       "failed",
-      "customer-hung-up-erearly",
       "declined",
     ];
     let wasAnswered = !failureReasons.includes(endedReason) && rawDuration > 10;
 
-    if (analysis?.structuredData?.status === "NO_CONTESTO") {
-      wasAnswered = false;
-    }
+    if (analysis?.structuredData?.status === "NO_CONTESTO") wasAnswered = false;
 
     const statusMap = {
       NO_ANSWER: "NO_CONTESTO",
@@ -192,10 +173,8 @@ exports.handleVapiWebhook = async (req, res) => {
     let negotiationStatus =
       statusMap[analysis?.structuredData?.status] ||
       (wasAnswered ? "CONTACTO" : "NO_CONTESTO");
-
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
-
     const nextStep = getNextStep(negotiationStatus);
     const minutesToSubtract = Math.round(rawDuration / 60);
 
@@ -203,6 +182,7 @@ exports.handleVapiWebhook = async (req, res) => {
       ? vapiSummary || "Llamada contestada sin resumen detallado."
       : `Llamada no exitosa. Motivo: ${endedReason}`;
 
+    // 1. Guardar en Historial
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -222,6 +202,7 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
+    // 2. Actualizar Cliente
     if (tenantId && clientId) {
       await dynamoDB.send(
         new UpdateCommand({
@@ -246,6 +227,7 @@ exports.handleVapiWebhook = async (req, res) => {
       );
     }
 
+    // 3. Descontar Minutos
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
@@ -264,16 +246,17 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
-    if (wasAnswered) {
+    // 4. Crear Tarea de Seguimiento (Solo si contestó)
+    if (wasAnswered && tenantId) {
       await dynamoDB.send(
         new PutCommand({
           TableName: TABLE_TASKS,
           Item: {
             taskId: Date.now(),
-            tenantId,
-            clientId,
-            customerName,
-            company,
+            tenantId: tenantId,
+            clientId: clientId,
+            customerName: customerName,
+            company: company,
             title: `📞 Seguimiento: ${customerName}`,
             description: finalSummaryText,
             isCompleted: false,
@@ -287,6 +270,7 @@ exports.handleVapiWebhook = async (req, res) => {
         }),
       );
     }
+
     return res.status(200).json({ success: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
