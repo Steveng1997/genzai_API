@@ -192,8 +192,10 @@ exports.handleVapiWebhook = async (req, res) => {
     let negotiationStatus =
       statusMap[analysis?.structuredData?.status] ||
       (wasAnswered ? "CONTACTO" : "NO_CONTESTO");
+
     const progress =
       analysis?.structuredData?.progress || (wasAnswered ? 10 : 0);
+
     const nextStep = getNextStep(negotiationStatus);
     const minutesToSubtract = Math.round(rawDuration / 60);
 
