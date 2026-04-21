@@ -23,7 +23,7 @@ const getNextStep = (currentStatus) => {
     No_contesto: "Reintentar llamada",
     Contacto: "Brindar información",
     Información: "Identificar interés",
-    Interes: "Agendar cita",
+    Interés: "Agendar cita",
     Cita: "Iniciar negociación",
     Negociación: "Cerrar venta",
     Cierre: "venta finalizada",
@@ -32,7 +32,6 @@ const getNextStep = (currentStatus) => {
   return steps[currentStatus] || "SIN DEFINIR";
 };
 
-// --- GET TASKS ---
 exports.getTasks = async (req, res) => {
   let { tenantId } = req.query;
   try {
@@ -49,7 +48,6 @@ exports.getTasks = async (req, res) => {
   }
 };
 
-// --- GET TODAY TASKS ---
 exports.getTodayTasks = async (req, res) => {
   const { tenantId } = req.query;
   const today = new Date().toISOString().split("T")[0];
@@ -70,7 +68,6 @@ exports.getTodayTasks = async (req, res) => {
   }
 };
 
-// --- COMPLETE TASK ---
 exports.completeTask = async (req, res) => {
   const { taskId, isCompleted, tenantId } = req.body;
   try {
@@ -94,15 +91,15 @@ exports.completeTask = async (req, res) => {
   }
 };
 
-// --- HANDLE RILEY TOOL ---
 exports.handleRileyTool = async (req, res) => {
   if (req.headers["x-vapi-secret"] !== process.env.VAPI_SECRET_KEY)
     return res.status(401).send();
 
   try {
     const payload = req.body.message || req.body;
-    const toolCall =
-      payload.toolCalls?.[0] || payload.toolCallList?.[0] || payload.toolCall;
+    const toolCall = payload.call?.toolCalls?.find(
+      (t) => t.function.name === "create_task",
+    );
 
     if (!toolCall) return res.status(400).json({ error: "No tool call data" });
 
@@ -110,8 +107,7 @@ exports.handleRileyTool = async (req, res) => {
       results: [
         {
           toolCallId: toolCall.id,
-          result:
-            "Información procesada. La tarea se creará al finalizar la llamada.",
+          result: "Información procesada. La cita se registrará al finalizar.",
         },
       ],
     });
@@ -120,12 +116,8 @@ exports.handleRileyTool = async (req, res) => {
   }
 };
 
-// --- HANDLE VAPI WEBHOOK ---
 exports.handleVapiWebhook = async (req, res) => {
-  console.log("--- INICIO WEBHOOK VAPI ---");
-
   if (req.headers["x-vapi-secret"] !== process.env.VAPI_SECRET_KEY) {
-    console.error("Error: Secreto de VAPI inválido");
     return res.status(401).send();
   }
 
@@ -142,6 +134,11 @@ exports.handleVapiWebhook = async (req, res) => {
     const userEmail = metadata.email;
     const customerName = call?.customer?.name || "Cliente";
 
+    const toolCall = call?.toolCalls?.find(
+      (t) => t.function.name === "create_task",
+    );
+    const toolArgs = toolCall ? toolCall.function.arguments : {};
+
     const globalInteractionDate = new Date().toISOString();
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
@@ -149,7 +146,6 @@ exports.handleVapiWebhook = async (req, res) => {
     const rawCost = Number(call?.cost || payload.cost || 0);
     const endedReason = call?.endedReason || "";
 
-    // Lógica técnica básica (Solo para historial y minutos)
     const failureReasons = [
       "voicemail",
       "no-answer",
@@ -157,26 +153,19 @@ exports.handleVapiWebhook = async (req, res) => {
       "failed",
       "declined",
     ];
+
     const wasAnswered =
       !failureReasons.includes(endedReason) && rawDuration > 10;
 
-    // --- LÓGICA BASADA EN IA (Riley) ---
     const structured = analysis?.structuredData || {};
-
-    // Si Riley no entrega un estado, por defecto es "No_contesto"
-    const negotiationStatus = structured.status || "No_contesto";
-
-    // Si Riley no entrega progreso, por defecto es 0
-    const progress = Number(structured.progress || 0);
+    let negotiationStatus = structured.status || "No_contesto";
+    let progress = Number(structured.progress || 0);
 
     const nextStep = getNextStep(negotiationStatus);
-    const finalSummaryText =
-      structured.resumen ||
-      structured.description ||
-      vapiSummary ||
-      "Sin resumen disponible.";
 
-    // 1. Guardar en Historial
+    const finalSummaryText =
+      structured.description || vapiSummary || "Sin resumen disponible.";
+
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
@@ -196,7 +185,6 @@ exports.handleVapiWebhook = async (req, res) => {
       }),
     );
 
-    // 2. Actualizar Cliente
     if (tenantId && clientId) {
       await dynamoDB.send(
         new UpdateCommand({
@@ -221,15 +209,16 @@ exports.handleVapiWebhook = async (req, res) => {
       );
     }
 
-    // 3. Descontar Minutos (Uso técnico de wasAnswered)
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
         new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
       );
       if (user) {
-        const minutesToSubtract = Math.round(rawDuration / 60);
-        const finalMinutes =
-          Math.floor(Number(user.availableMinutes || 0)) - minutesToSubtract;
+        const minutesToSubtract = Math.max(1, Math.round(rawDuration / 60));
+        const finalMinutes = Math.max(
+          0,
+          Math.floor(Number(user.availableMinutes || 0)) - minutesToSubtract,
+        );
         await dynamoDB.send(
           new UpdateCommand({
             Key: { email: userEmail },
@@ -241,7 +230,6 @@ exports.handleVapiWebhook = async (req, res) => {
       }
     }
 
-    // 4. Crear Tarea de Seguimiento
     if (tenantId) {
       await dynamoDB.send(
         new PutCommand({
@@ -252,13 +240,18 @@ exports.handleVapiWebhook = async (req, res) => {
             clientId: clientId ? String(clientId).trim() : "N/A",
             customerName,
             company: metadata.company || "N/A",
-            title: `📞 Seguimiento: ${customerName}`,
+            title:
+              negotiationStatus === "Cita"
+                ? `📅 Cita: ${customerName}`
+                : `📞 Seguimiento: ${customerName}`,
             description: finalSummaryText,
             isCompleted: false,
             createdAt: globalInteractionDate,
             lastInteraction: globalInteractionDate,
             status: negotiationStatus,
             progress: progress,
+            priority: structured.priority,
+            cita: toolArgs.cita || "No definida",
             nextStep: nextStep,
             source: "Vapi Webhook",
           },
@@ -266,15 +259,12 @@ exports.handleVapiWebhook = async (req, res) => {
       );
     }
 
-    console.log("--- WEBHOOK FINALIZADO CON ÉXITO ---");
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error("!!! ERROR CRÍTICO EN WEBHOOK !!!", error);
     return res.status(500).json({ error: error.message });
   }
 };
 
-// --- COUNTERS ---
 exports.getHistoryCount = async (req, res) => {
   const { tenantId } = req.query;
   try {
