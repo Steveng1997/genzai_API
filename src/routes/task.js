@@ -8,5 +8,6 @@ router.get("/today/count", taskController.getTodayTasksCount);
 router.get("/today/list", taskController.getTodayTasks);
 router.patch("/update-status", taskController.completeTask);
 router.post("/webhook-vapi", taskController.handleVapiWebhook);
+router.delete("/delete", taskController.deleteTask);
 
 module.exports = router;

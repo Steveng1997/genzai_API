@@ -3,6 +3,7 @@ const {
   ScanCommand,
   UpdateCommand,
   GetCommand,
+  DeleteCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
@@ -331,6 +332,24 @@ exports.getTodayTasksCount = async (req, res) => {
       }),
     );
     res.status(200).json({ count: data.Count || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.deleteTask = async (req, res) => {
+  const { tenantId, taskId } = req.body;
+  try {
+    await dynamoDB.send(
+      new DeleteCommand({
+        TableName: TABLE_TASKS,
+        Key: {
+          tenantId: String(tenantId).trim(),
+          taskId: Number(taskId),
+        },
+      }),
+    );
+    res.status(200).json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
