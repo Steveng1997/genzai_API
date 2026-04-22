@@ -30,10 +30,11 @@ app.use("/api/auth", require("./src/routes/auth"));
 app.use("/api/business", require("./src/routes/business"));
 app.use("/api/clients", require("./src/routes/client"));
 app.use("/api/task", require("./src/routes/task"));
-app.use("/api/ai", require("./src/routes/ai")); // Aquí es donde Multer hará su magia
+app.use("/api/ai", require("./src/routes/ai"));
 app.use("/api/call", require("./src/routes/call"));
 app.use("/api/plan", require("./src/routes/plan"));
 app.use("/api/products", require("./src/routes/products"));
+app.use("/api/services", require("./src/routes/services"));
 app.use("/api/vapi", require("./src/routes/vapi"));
 
 // --- MANEJO DE ERRORES ---
