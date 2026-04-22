@@ -15,38 +15,13 @@ const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS;
 
 const getContentType = (fileName) => {
   const ext = path.extname(fileName).toLowerCase();
-  switch (ext) {
-    case ".pdf":
-      return "application/pdf";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".png":
-      return "image/png";
-    default:
-      return "application/octet-stream";
-  }
-};
-
-exports.countProductsByTenant = async (req, res) => {
-  const { tenantId } = req.params;
-  try {
-    if (!tenantId) {
-      return res.status(400).json({ error: "tenantId is required" });
-    }
-
-    const command = new QueryCommand({
-      TableName: TABLE_PRODUCTS,
-      KeyConditionExpression: "tenantId = :tId",
-      ExpressionAttributeValues: { ":tId": tenantId.trim() },
-      Select: "COUNT",
-    });
-
-    const data = await docClient.send(command);
-    res.status(200).json({ count: data.Count || 0 });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const mimes = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+  };
+  return mimes[ext] || "application/octet-stream";
 };
 
 exports.createProduct = async (req, res) => {
@@ -66,56 +41,40 @@ exports.createProduct = async (req, res) => {
       files,
     } = req.body;
 
-    if (!tenantId) {
+    if (!tenantId)
       return res.status(400).json({ error: "tenantId is required" });
-    }
 
     let fileUrls = [];
+    let primaryPhotoUrl = "";
+
     if (files && Array.isArray(files)) {
       for (const file of files) {
         if (file.fileBase64 && file.fileName) {
           const buffer = Buffer.from(file.fileBase64, "base64");
           const fileKey = `products/${tenantId}/${crypto.randomUUID()}-${file.fileName}`;
-          const contentType = getContentType(file.fileName);
+          const s3Url = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileKey}`;
 
           await s3Client.send(
             new PutObjectCommand({
               Bucket: BUCKET_NAME,
               Key: fileKey,
               Body: buffer,
-              ContentType: contentType,
+              ContentType: getContentType(file.fileName),
             }),
           );
 
-          fileUrls.push(
-            `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileKey}`,
-          );
+          fileUrls.push(s3Url);
+          if (file.isPrimary) primaryPhotoUrl = s3Url;
         }
       }
+      if (!primaryPhotoUrl && fileUrls.length > 0)
+        primaryPhotoUrl = fileUrls[0];
     }
 
     const productId = crypto.randomUUID();
-    const foodFilter = /food|restaurant|meal|menu|edible|comida|restaurante/i;
-    const isFood =
-      (colors && foodFilter.test(colors)) || (name && foodFilter.test(name));
-    const colorValue = isFood ? "N/A" : colors || "N/A";
-
-    let vehicleFields = {};
-    const vehicleTypes = ["auto", "vehicle", "car", "coche", "carro"];
-
-    if (productType && vehicleTypes.includes(productType.toLowerCase())) {
-      vehicleFields = {
-        brand: vehicleData?.brand || "N/A",
-        reference: vehicleData?.reference || "N/A",
-        model: vehicleData?.model || "N/A",
-        segment: vehicleData?.segment || "N/A",
-        fuelType: vehicleData?.fuelType || "N/A",
-      };
-    }
-
     const newProduct = {
       tenantId: tenantId.trim(),
-      productId: productId,
+      productId,
       name: (name || "N/A").trim(),
       price: Number(price) || 0,
       description: description || "",
@@ -123,21 +82,26 @@ exports.createProduct = async (req, res) => {
       status: status || "Activo",
       stock: Number(stock) || 0,
       productType: productType || "General",
-      color: colorValue,
-      ...vehicleFields,
+      color: colors || "N/A",
       observations: observations || "",
-      fileUrls: fileUrls,
+      fileUrls,
+      primaryPhotoUrl,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    await docClient.send(
-      new PutCommand({
-        TableName: TABLE_PRODUCTS,
-        Item: newProduct,
-      }),
-    );
+    const vehicleTypes = ["auto", "vehicle", "car", "coche", "carro"];
+    if (productType && vehicleTypes.includes(productType.toLowerCase())) {
+      Object.assign(newProduct, {
+        brand: vehicleData?.brand || "N/A",
+        reference: vehicleData?.reference || "N/A",
+        model: vehicleData?.model || "N/A",
+      });
+    }
 
+    await docClient.send(
+      new PutCommand({ TableName: TABLE_PRODUCTS, Item: newProduct }),
+    );
     res.status(201).json({ message: "Product created", data: newProduct });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -145,19 +109,14 @@ exports.createProduct = async (req, res) => {
 };
 
 exports.getProductsByTenant = async (req, res) => {
-  const { tenantId } = req.params;
   try {
-    if (!tenantId) {
-      return res.status(400).json({ error: "tenantId is required" });
-    }
-
-    const command = new QueryCommand({
-      TableName: TABLE_PRODUCTS,
-      KeyConditionExpression: "tenantId = :tId",
-      ExpressionAttributeValues: { ":tId": tenantId.trim() },
-    });
-
-    const data = await docClient.send(command);
+    const data = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_PRODUCTS,
+        KeyConditionExpression: "tenantId = :tId",
+        ExpressionAttributeValues: { ":tId": req.params.tenantId.trim() },
+      }),
+    );
     res.status(200).json(data.Items || []);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -167,35 +126,26 @@ exports.getProductsByTenant = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { tenantId, productId, updates } = req.body;
-
-    if (!tenantId || !productId || !updates) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
     let updateExp = "set updatedAt = :u";
     let attrValues = { ":u": new Date().toISOString() };
     let attrNames = {};
 
-    const keys = Object.keys(updates);
-    keys.forEach((key, i) => {
-      updateExp += `, #field${i} = :v${i}`;
-      attrNames[`#field${i}`] = key;
+    Object.keys(updates).forEach((key, i) => {
+      updateExp += `, #f${i} = :v${i}`;
+      attrNames[`#f${i}`] = key;
       attrValues[`:v${i}`] = updates[key];
     });
 
-    const command = new UpdateCommand({
-      TableName: TABLE_PRODUCTS,
-      Key: {
-        tenantId: tenantId.trim(),
-        productId: productId.trim(),
-      },
-      UpdateExpression: updateExp,
-      ExpressionAttributeNames: attrNames,
-      ExpressionAttributeValues: attrValues,
-      ReturnValues: "ALL_NEW",
-    });
-
-    const result = await docClient.send(command);
+    const result = await docClient.send(
+      new UpdateCommand({
+        TableName: TABLE_PRODUCTS,
+        Key: { tenantId: tenantId.trim(), productId: productId.trim() },
+        UpdateExpression: updateExp,
+        ExpressionAttributeNames: attrNames,
+        ExpressionAttributeValues: attrValues,
+        ReturnValues: "ALL_NEW",
+      }),
+    );
     res.status(200).json({ message: "Updated", data: result.Attributes });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -203,24 +153,33 @@ exports.updateProduct = async (req, res) => {
 };
 
 exports.deleteProduct = async (req, res) => {
-  const { tenantId, productId } = req.params;
   try {
-    if (!tenantId || !productId) {
-      return res
-        .status(400)
-        .json({ error: "tenantId and productId are required" });
-    }
-
     await docClient.send(
       new DeleteCommand({
         TableName: TABLE_PRODUCTS,
         Key: {
-          tenantId: String(tenantId).trim(),
-          productId: String(productId).trim(),
+          tenantId: req.params.tenantId.trim(),
+          productId: req.params.productId.trim(),
         },
       }),
     );
     res.status(200).json({ message: "Product deleted" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.countProductsByTenant = async (req, res) => {
+  try {
+    const data = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_PRODUCTS,
+        KeyConditionExpression: "tenantId = :tId",
+        ExpressionAttributeValues: { ":tId": req.params.tenantId.trim() },
+        Select: "COUNT",
+      }),
+    );
+    res.status(200).json({ count: data.Count || 0 });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
