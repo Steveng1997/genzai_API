@@ -5,12 +5,13 @@ const {
   PutCommand,
   DeleteCommand,
   UpdateCommand,
+  GetCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const crypto = require("crypto");
 const path = require("path");
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
-const BUCKET_NAME = process.env.S3_BUCKET_PRODUCTS; // <--- ESTE ESTÁ LLEGANDO VACÍO
+const BUCKET_NAME = process.env.S3_BUCKET_PRODUCTS;
 const TABLE_PRODUCTS = process.env.DYNAMODB_TABLE_PRODUCTS;
 
 const getContentType = (fileName) => {
@@ -42,7 +43,6 @@ exports.createProduct = async (req, res) => {
       files,
     } = req.body;
 
-    // VALIDACIÓN CRÍTICA DE CONFIGURACIÓN
     if (!BUCKET_NAME) {
       console.error(
         "❌ ERROR: La variable S3_BUCKET_PRODUCTS no está definida.",
@@ -61,16 +61,13 @@ exports.createProduct = async (req, res) => {
       for (const [index, file] of files.entries()) {
         if (file.fileBase64 && file.fileName) {
           console.log(`Subiendo archivo [${index}]: ${file.fileName}`);
-
           const buffer = Buffer.from(file.fileBase64, "base64");
           const fileKey = `products/${tenantId.trim()}/${crypto.randomUUID()}-${file.fileName}`;
-
-          // Construcción manual de URL (Asegúrate que la región esté bien)
           const s3Url = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
 
           await s3Client.send(
             new PutObjectCommand({
-              Bucket: BUCKET_NAME, // Aquí fallaba porque era undefined
+              Bucket: BUCKET_NAME,
               Key: fileKey,
               Body: buffer,
               ContentType: getContentType(file.fileName),
@@ -121,12 +118,9 @@ exports.createProduct = async (req, res) => {
     res.status(201).json({ message: "Product created", data: newProduct });
   } catch (error) {
     console.error("=== ERROR EN CREATE PRODUCT ===");
-    console.error("Mensaje:", error.message);
     res.status(500).json({ error: error.message });
   }
 };
-
-// ... (Resto de funciones get, update, delete se mantienen igual)
 
 exports.getProductsByTenant = async (req, res) => {
   try {
@@ -143,9 +137,33 @@ exports.getProductsByTenant = async (req, res) => {
   }
 };
 
+exports.getProductById = async (req, res) => {
+  try {
+    const { tenantId, productId } = req.params;
+    const data = await docClient.send(
+      new GetCommand({
+        TableName: TABLE_PRODUCTS,
+        Key: {
+          tenantId: tenantId.trim(),
+          productId: productId.trim(),
+        },
+      }),
+    );
+    if (!data.Item) return res.status(404).json({ error: "Product not found" });
+    res.status(200).json(data.Item);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.updateProduct = async (req, res) => {
   try {
     const { tenantId, productId, updates } = req.body;
+
+    if (!tenantId || !productId || !updates) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
     let updateExp = "set updatedAt = :u";
     let attrValues = { ":u": new Date().toISOString() };
     let attrNames = {};
@@ -159,7 +177,10 @@ exports.updateProduct = async (req, res) => {
     const result = await docClient.send(
       new UpdateCommand({
         TableName: TABLE_PRODUCTS,
-        Key: { tenantId: tenantId.trim(), productId: productId.trim() },
+        Key: {
+          tenantId: tenantId.trim(),
+          productId: productId.trim(),
+        },
         UpdateExpression: updateExp,
         ExpressionAttributeNames: attrNames,
         ExpressionAttributeValues: attrValues,
