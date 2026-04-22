@@ -151,3 +151,19 @@ exports.deleteService = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+exports.countServicesByTenant = async (req, res) => {
+  try {
+    const data = await docClient.send(
+      new QueryCommand({
+        TableName: TABLE_SERVICES,
+        KeyConditionExpression: "tenantId = :tId",
+        ExpressionAttributeValues: { ":tId": req.params.tenantId.trim() },
+        Select: "COUNT",
+      }),
+    );
+    res.status(200).json({ count: data.Count || 0 });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
