@@ -1,5 +1,9 @@
 const docClient = require("../services/dynamo");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} = require("@aws-sdk/client-s3");
 const {
   QueryCommand,
   PutCommand,
@@ -164,6 +168,66 @@ exports.updateProduct = async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    const currentData = await docClient.send(
+      new GetCommand({
+        TableName: TABLE_PRODUCTS,
+        Key: { tenantId: tenantId.trim(), productId: productId.trim() },
+      }),
+    );
+
+    if (!currentData.Item) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    const oldProduct = currentData.Item;
+
+    if (updates.files && Array.isArray(updates.files)) {
+      const oldUrls = oldProduct.fileUrls || [];
+      let newFileUrls = [];
+      let newPrimaryPhotoUrl = "";
+
+      for (const file of updates.files) {
+        if (file.fileBase64 && file.fileName) {
+          const buffer = Buffer.from(file.fileBase64, "base64");
+          const fileKey = `products/${tenantId.trim()}/${crypto.randomUUID()}-${file.fileName}`;
+          const s3Url = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+
+          await s3Client.send(
+            new PutObjectCommand({
+              Bucket: BUCKET_NAME,
+              Key: fileKey,
+              Body: buffer,
+              ContentType: getContentType(file.fileName),
+            }),
+          );
+          newFileUrls.push(s3Url);
+          if (file.isPrimary) newPrimaryPhotoUrl = s3Url;
+        } else if (file.url) {
+          newFileUrls.push(file.url);
+          if (file.isPrimary) newPrimaryPhotoUrl = file.url;
+        }
+      }
+
+      const urlsToDelete = oldUrls.filter((url) => !newFileUrls.includes(url));
+      for (const url of urlsToDelete) {
+        try {
+          const key = url.split(".com/")[1];
+          await s3Client.send(
+            new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key }),
+          );
+        } catch (s3Err) {
+          console.error("Error deleting from S3:", s3Err);
+        }
+      }
+
+      if (!newPrimaryPhotoUrl && newFileUrls.length > 0)
+        newPrimaryPhotoUrl = newFileUrls[0];
+
+      updates.fileUrls = newFileUrls;
+      updates.primaryPhotoUrl = newPrimaryPhotoUrl;
+      delete updates.files;
+    }
+
     let updateExp = "set updatedAt = :u";
     let attrValues = { ":u": new Date().toISOString() };
     let attrNames = {};
@@ -195,6 +259,25 @@ exports.updateProduct = async (req, res) => {
 
 exports.deleteProduct = async (req, res) => {
   try {
+    const data = await docClient.send(
+      new GetCommand({
+        TableName: TABLE_PRODUCTS,
+        Key: {
+          tenantId: req.params.tenantId.trim(),
+          productId: req.params.productId.trim(),
+        },
+      }),
+    );
+
+    if (data.Item && data.Item.fileUrls) {
+      for (const url of data.Item.fileUrls) {
+        const key = url.split(".com/")[1];
+        await s3Client.send(
+          new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key }),
+        );
+      }
+    }
+
     await docClient.send(
       new DeleteCommand({
         TableName: TABLE_PRODUCTS,
