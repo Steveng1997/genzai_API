@@ -77,19 +77,19 @@ exports.getServicesByTenant = async (req, res) => {
 };
 
 exports.getServiceById = async (req, res) => {
-  const { tenantId, serviceId } = req.params;
   try {
-    const command = new GetCommand({
-      TableName: TABLE_SERVICES,
-      Key: {
-        tenantId: tenantId.trim(),
-        serviceId: serviceId.trim(),
-      },
-    });
+    const { tenantId, serviceId } = req.params;
+    const data = await docClient.send(
+      new GetCommand({
+        TableName: TABLE_SERVICES,
+        Key: {
+          tenantId: tenantId.trim(),
+          serviceId: serviceId.trim(),
+        },
+      }),
+    );
 
-    const data = await docClient.send(command);
-    if (!data.Item)
-      return res.status(404).json({ message: "Service not found" });
+    if (!data.Item) return res.status(404).json({ error: "Service not found" });
     res.status(200).json(data.Item);
   } catch (error) {
     res.status(500).json({ error: error.message });

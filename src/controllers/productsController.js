@@ -153,6 +153,7 @@ exports.getProductById = async (req, res) => {
         },
       }),
     );
+    
     if (!data.Item) return res.status(404).json({ error: "Product not found" });
     res.status(200).json(data.Item);
   } catch (error) {
