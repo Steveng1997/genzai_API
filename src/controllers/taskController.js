@@ -169,7 +169,9 @@ exports.handleVapiWebhook = async (req, res) => {
           : toolCall.function.arguments;
     }
 
-    const globalInteractionDate = new Date().toISOString();
+    const globalInteractionDate = new Date()
+      .toLocaleString("sv-SE")
+      .replace(" ", "T");
     const rawDuration = Number(
       call?.durationSeconds || payload.durationSeconds || 0,
     );
