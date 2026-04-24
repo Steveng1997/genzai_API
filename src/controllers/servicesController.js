@@ -41,6 +41,7 @@ exports.createService = async (req, res) => {
       description: description || "",
       modality: modality || "Presencial",
       status: status || "Activo",
+      isCompleted: false,
       notes: notes || "",
       serviceDetails: serviceDetails || [],
       createdAt: new Date().toISOString(),
@@ -131,6 +132,29 @@ exports.updateService = async (req, res) => {
     res.status(200).json({ message: "Updated", data: result.Attributes });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+exports.completeService = async (req, res) => {
+  const { serviceId, isCompleted, tenantId } = req.body;
+  try {
+    if (!tenantId || !serviceId) {
+      return res.status(400).json({ error: "Faltan parámetros" });
+    }
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: TABLE_SERVICES,
+        Key: {
+          tenantId: String(tenantId).trim(),
+          serviceId: Number(serviceId),
+        },
+        UpdateExpression: "set isCompleted = :val",
+        ExpressionAttributeValues: { ":val": isCompleted },
+      }),
+    );
+    res.status(200).json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };
 

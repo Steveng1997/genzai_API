@@ -6,6 +6,7 @@ router.post("/save", serviceController.createService);
 router.get("/tenant/:tenantId", serviceController.getServicesByTenant);
 router.get("/count/:tenantId", serviceController.countServicesByTenant);
 router.get("/:tenantId/:serviceId", serviceController.getServiceById);
+router.patch("/update-status", serviceController.completeService);
 router.put("/update", serviceController.updateService);
 router.delete("/delete/:tenantId/:serviceId", serviceController.deleteService);
 
