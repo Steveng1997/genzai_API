@@ -24,6 +24,7 @@ exports.getConfig = async (req, res) => {
     );
     res.status(200).json(Item || {});
   } catch (e) {
+    console.error("Error en getConfig:", e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -58,6 +59,7 @@ exports.updatePrompt = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Instrucciones actualizadas." });
   } catch (e) {
+    console.error("Error en updatePrompt:", e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -83,18 +85,22 @@ exports.editPrompt = async (req, res) => {
     );
     res.status(200).json({ success: true });
   } catch (e) {
+    console.error("Error en editPrompt:", e);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.askRiley = async (req, res) => {
   const { message, tenantId } = req.body;
+  console.log(`Iniciando askRiley para tenantId: ${tenantId}`);
 
   if (!message || !tenantId) {
+    console.error("Error: Faltan datos en el body");
     return res.status(400).json({ error: "Faltan datos (message o tenantId)" });
   }
 
   try {
+    console.log("Buscando configuración en DynamoDB...");
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
@@ -104,11 +110,13 @@ exports.askRiley = async (req, res) => {
 
     const assistantId = Item?.openaiAssistantId;
     if (!assistantId) {
+      console.error(`AssistantId no encontrado para el tenant: ${tenantId}`);
       return res
         .status(404)
         .json({ error: "Asistente no configurado para este tenant." });
     }
 
+    console.log(`Usando AssistantID: ${assistantId}. Creando thread...`);
     const thread = await openai.beta.threads.create();
 
     await openai.beta.threads.messages.create(thread.id, {
@@ -116,6 +124,7 @@ exports.askRiley = async (req, res) => {
       content: message,
     });
 
+    console.log("Ejecutando Run con OpenAI...");
     const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
       assistant_id: assistantId,
     });
@@ -123,11 +132,14 @@ exports.askRiley = async (req, res) => {
     if (run.status === "completed") {
       const messages = await openai.beta.threads.messages.list(thread.id);
       const reply = messages.data[0].content[0].text.value;
+      console.log("Respuesta de OpenAI obtenida con éxito.");
       res.status(200).json({ reply });
     } else {
+      console.error(`Run fallido. Estado: ${run.status}`);
       res.status(500).json({ error: `Run finalizó con estado: ${run.status}` });
     }
   } catch (e) {
+    console.error("ERROR CRITICO EN askRiley:", e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -136,6 +148,8 @@ exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   let { email, company, tenantId, vapiAssistantId } = req.body;
   tenantId = (tenantId || "").trim();
+
+  console.log(`Iniciando setupAssistant para: ${tenantId}`);
 
   if (!tenantId) return res.status(400).json({ message: "Falta el tenantId." });
 
@@ -149,18 +163,15 @@ exports.setupAssistant = async (req, res) => {
 
     const existingFileNames = Item?.fileNames || [];
     const existingFileIds = Item?.openaiFileIds || [];
-
     const newFileIds = [];
     const newFileNames = [];
 
     for (const file of files) {
       if (existingFileNames.includes(file.originalname)) {
-        console.log(
-          `El archivo ${file.originalname} ya existe. Saltando subida.`,
-        );
+        console.log(`Archivo duplicado saltado: ${file.originalname}`);
         continue;
       }
-
+      console.log(`Subiendo a OpenAI: ${file.originalname}`);
       const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
       const uploadResponse = await openai.files.create({
         file: fileStream,
@@ -200,6 +211,7 @@ exports.setupAssistant = async (req, res) => {
       : Item?.systemPrompt || "Eres un asistente virtual.";
 
     if (!openaiId) {
+      console.log("Creando nuevo asistente en OpenAI...");
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company || "Empresa"}`,
         instructions: `Eres Riley de "${company || "la empresa"}". Instrucciones: ${instructionsText}`,
@@ -208,6 +220,7 @@ exports.setupAssistant = async (req, res) => {
       });
       openaiId = assistant.id;
     } else {
+      console.log(`Actualizando asistente existente: ${openaiId}`);
       await openai.beta.assistants.update(openaiId, {
         instructions: `Eres Riley de "${company || "la empresa"}". Instrucciones: ${instructionsText}`,
         tools: assistantTools,
@@ -215,6 +228,7 @@ exports.setupAssistant = async (req, res) => {
     }
 
     if (finalFileIds.length > 0) {
+      console.log("Configurando Vector Store...");
       let vectorStoreId;
       try {
         const vectorStore = await openai.beta.vectorStores.create({
@@ -284,6 +298,7 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
+    console.error("ERROR EN setupAssistant:", e);
     res.status(500).json({ error: e.message });
   }
 };
