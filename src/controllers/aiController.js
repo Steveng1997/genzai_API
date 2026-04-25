@@ -87,6 +87,51 @@ exports.editPrompt = async (req, res) => {
   }
 };
 
+exports.askRiley = async (req, res) => {
+  const { message, tenantId } = req.body;
+
+  if (!message || !tenantId) {
+    return res.status(400).json({ error: "Faltan datos (message o tenantId)" });
+  }
+
+  try {
+    const { Item } = await dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_CONFIGS,
+        Key: { businessId: tenantId },
+      }),
+    );
+
+    const assistantId = Item?.openaiAssistantId;
+    if (!assistantId) {
+      return res
+        .status(404)
+        .json({ error: "Asistente no configurado para este tenant." });
+    }
+
+    const thread = await openai.beta.threads.create();
+
+    await openai.beta.threads.messages.create(thread.id, {
+      role: "user",
+      content: message,
+    });
+
+    const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
+      assistant_id: assistantId,
+    });
+
+    if (run.status === "completed") {
+      const messages = await openai.beta.threads.messages.list(thread.id);
+      const reply = messages.data[0].content[0].text.value;
+      res.status(200).json({ reply });
+    } else {
+      res.status(500).json({ error: `Run finalizó con estado: ${run.status}` });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   let { email, company, tenantId, vapiAssistantId } = req.body;
@@ -109,7 +154,6 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
 
     for (const file of files) {
-      // VALIDACIÓN: Si el nombre ya existe, lo ignoramos por completo
       if (existingFileNames.includes(file.originalname)) {
         console.log(
           `El archivo ${file.originalname} ya existe. Saltando subida.`,
@@ -216,7 +260,6 @@ exports.setupAssistant = async (req, res) => {
           },
         );
       }
-      console.log("LOG: setupAssistant VINCULACION EXITOSA");
     }
 
     await dynamoDB.send(
