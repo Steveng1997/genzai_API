@@ -26,6 +26,26 @@ exports.getAllClients = async (req, res) => {
   }
 };
 
+exports.getClientById = async (req, res) => {
+  try {
+    const { tenantId, clientId } = req.params;
+    const data = await docClient.send(
+      new GetCommand({
+        TableName: TABLE_CLIENTS,
+        Key: {
+          tenantId: tenantId.trim(),
+          clientId: clientId.trim(),
+        },
+      }),
+    );
+
+    if (!data.Item) return res.status(404).json({ error: "Client not found" });
+    res.status(200).json(data.Item);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 exports.getClientCount = async (req, res) => {
   let { tenantId } = req.query;
   try {
