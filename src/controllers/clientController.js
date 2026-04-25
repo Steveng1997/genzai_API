@@ -4,6 +4,7 @@ const {
   PutCommand,
   DeleteCommand,
   UpdateCommand,
+  GetCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const { v4: uuidv4 } = require("uuid");
 
