@@ -93,10 +93,10 @@ exports.askRiley = async (req, res) => {
 
     let Item = Items?.[0];
     let assistantId =
-      Item?.openaiAssistantId || (await createOpenAIAssistant(company));
+      Item?.openaiAssistantId ||
+      (await createOpenAIAssistant(company || Item?.company));
     let agentId = Item?.agentId || uuidv4();
 
-    // Validar o Crear Thread
     let threadId = Item?.activeThreadId;
     if (!threadId) {
       const thread = await openai.beta.threads.create();
@@ -115,7 +115,6 @@ exports.askRiley = async (req, res) => {
       role: "user",
       content: message,
     });
-
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
@@ -175,9 +174,16 @@ exports.setupAssistant = async (req, res) => {
     const finalFileNames = [...(Item?.fileNames || []), ...newFileNames];
 
     if (newFileIds.length > 0) {
+      // VALIDACIÓN DE SEGURIDAD PARA EL SDK
+      if (!openai.beta.vectorStores) {
+        throw new Error(
+          "El SDK de OpenAI no soporta 'vectorStores'. Ejecuta: npm install openai@latest",
+        );
+      }
+
       const vectorStore = await openai.beta.vectorStores.create({
         name: `VS-${tenantId}-${Date.now()}`,
-        file_ids: finalFileIds,
+        file_ids: newFileIds, // Subimos solo los nuevos para optimizar
       });
 
       await openai.beta.assistants.update(assistantId, {
@@ -204,27 +210,23 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
+    console.error("❌ Error en setupAssistant:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 /**
  * 4. ANALIZADOR MULTIMODAL (IMÁGENES + PDF)
- * Procesa archivos individuales para contar estadísticas.
  */
 exports.analyzeProductImage = async (req, res) => {
   try {
     const { tenantId, email } = req.body;
     const file = req.file;
-
     if (!file) return res.status(400).json({ error: "No file provided" });
-    console.log(`🚀 Analizando: ${file.originalname}`);
 
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
 
-    // --- CASO: IMÁGENES (JPG, JPEG, PNG, WEBP) ---
     if (file.mimetype.startsWith("image/")) {
-      console.log("📸 Usando GPT-4o Vision...");
       const response = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -233,7 +235,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'Analiza esta imagen. Determina si es una "Ficha Técnica" (contiene tablas técnicas, medidas, materiales) o una "Foto de Producto". Retorna JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Analiza la imagen. Retorna JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               },
               {
                 type: "image_url",
@@ -247,12 +249,7 @@ exports.analyzeProductImage = async (req, res) => {
         response_format: { type: "json_object" },
       });
       result = JSON.parse(response.choices[0].message.content);
-    }
-
-    // --- CASO: DOCUMENTOS PDF ---
-    else if (file.mimetype === "application/pdf") {
-      console.log("📄 Usando Assistant para leer PDF...");
-
+    } else if (file.mimetype === "application/pdf") {
       const openAIFile = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
@@ -265,7 +262,7 @@ exports.analyzeProductImage = async (req, res) => {
             {
               role: "user",
               content:
-                "Analiza el PDF adjunto y dime si es una ficha técnica. Responde solo JSON: {isTechnicalSheet: boolean, name: string, price: number}",
+                "Analiza el PDF adjunto. Responde solo JSON: {isTechnicalSheet: boolean, name: string, price: number}",
               attachments: [
                 { file_id: openAIFile.id, tools: [{ type: "file_search" }] },
               ],
@@ -280,20 +277,14 @@ exports.analyzeProductImage = async (req, res) => {
         const jsonMatch = text.match(/\{.*\}/s);
         result = JSON.parse(jsonMatch[0]);
       }
-
-      await openai.files.del(openAIFile.id); // Borrar archivo temporal
+      await openai.files.del(openAIFile.id);
     } else {
-      return res
-        .status(400)
-        .json({ error: "Formato no permitido (Solo Imagen o PDF)" });
+      return res.status(400).json({ error: "Solo JPG, PNG o PDF" });
     }
 
-    // --- ACTUALIZAR CONTADORES ---
     await updateCounter(tenantId, email, result.isTechnicalSheet);
-
     res.status(200).json(result);
   } catch (e) {
-    console.error("❌ Error en análisis:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
