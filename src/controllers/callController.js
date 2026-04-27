@@ -13,40 +13,37 @@ exports.makeSmartCall = async (req, res) => {
   tenantId = (tenantId || "").trim();
 
   try {
-    if (!tenantId) {
-      return res.status(400).json({ message: "El tenantId es requerido." });
-    }
+    if (!tenantId)
+      return res.status(400).json({ message: "tenantId requerido" });
 
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
-        Key: {
-          tenantId: tenantId,
-          email: email,
-        },
+        Key: { tenantId: tenantId, email: email },
       }),
     );
 
-    const availableMinutes = userDoc?.availableMinutes || 0;
-    if (availableMinutes <= 0) {
+    if ((userDoc?.availableMinutes || 0) <= 0) {
       return res.status(403).json({
         success: false,
-        message: "No tienes minutos disponibles.",
+        message: "Sin minutos disponibles",
         minutes: availableMinutes,
       });
     }
 
-    const { Item: config } = await dynamoDB.send(
-      new GetCommand({
+    const { Items: configs } = await dynamoDB.send(
+      new ScanCalls({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": tenantId },
       }),
     );
 
+    const config = configs?.[0];
     if (!config || !config.assistantId) {
-      return res.status(404).json({
-        message: "No hay IA configurada en Vapi o falta assistantId.",
-      });
+      return res
+        .status(404)
+        .json({ message: "IA no configurada para este tenant." });
     }
 
     const { Items: customers } = await dynamoDB.send(
@@ -58,100 +55,95 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!customers || customers.length === 0) {
-      return res.status(404).json({ message: "No hay clientes activos." });
+      return res
+        .status(404)
+        .json({ message: "No hay clientes activos para llamar." });
     }
 
     const now = new Date();
-    const colombiaDateObj = new Date(
+    const colombiaDate = new Date(
       now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
     );
-    const colombiaHour = colombiaDateObj.getHours();
-    const fechaHoy = colombiaDateObj.toISOString().split("T")[0];
+    const hour = colombiaDate.getHours();
+    const fechaHoy = colombiaDate.toISOString().split("T")[0];
 
-    let tempGreeting = "Buenos días";
-    if (colombiaHour >= 12 && colombiaHour < 18) tempGreeting = "Buenas tardes";
-    else if (colombiaHour >= 18 || colombiaHour < 5)
-      tempGreeting = "Buenas noches";
+    let greeting = "Buenos días";
+    if (hour >= 12 && hour < 18) greeting = "Buenas tardes";
+    else if (hour >= 18 || hour < 5) greeting = "Buenas noches";
 
-    const calls = customers.map(async (customer) => {
+    const callPromises = customers.map(async (customer) => {
       try {
-        let rawPhone = customer.phone.toString().replace(/\s+/g, "");
-        let formattedPhone = rawPhone.startsWith("+")
+        const rawPhone = customer.phone.toString().replace(/\s+/g, "");
+        const formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
 
-        const response = await axios.post(
-          "https://api.vapi.ai/call/phone",
-          {
-            customer: {
-              number: formattedPhone,
-              name: customer.fullName,
-            },
-            assistantId: config.assistantId,
-            phoneNumberId:
-              config.vapiPhoneNumberId ||
-              "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
-            assistantOverrides: {
-              serverUrl:
-                "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
-              silenceTimeoutSeconds: 30,
-              maxDurationSeconds: 600,
-              backchannelingEnabled: true,
-              analysisPlan: {
-                structuredDataSchema: {
-                  type: "object",
-                  properties: {
-                    status: {
-                      type: "string",
-                      enum: [
-                        "No_contesto",
-                        "Contacto",
-                        "Información",
-                        "Interés",
-                        "Cita",
-                        "Negociación",
-                        "Cierre",
-                        "Pérdida",
-                      ],
-                      description:
-                        "El estado actual de la venta basado en la interacción.",
-                    },
-                    progress: {
-                      type: "number",
-                      description:
-                        "Un número del 0 al 100 que represente el avance según la tabla de estados definida.",
-                    },
-                    description: {
-                      type: "string",
-                      description:
-                        "Un resumen detallado de la conversación, acuerdos y necesidades del cliente.",
-                    },
-                    priority: {
-                      type: "string",
-                      enum: ["Baja", "Media", "Alta"],
-                    },
-                    cita: {
-                      type: "string",
-                      description:
-                        "La fecha y hora de la cita acordada (ej: Lunes 10am). Si no hay, poner 'No definida'.",
-                    },
+        const vapiPayload = {
+          customer: { number: formattedPhone, name: customer.fullName },
+          assistantId: config.assistantId,
+          phoneNumberId:
+            config.vapiPhoneNumberId || "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
+          assistantOverrides: {
+            serverUrl:
+              "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/webhook",
+            silenceTimeoutSeconds: 30,
+            maxDurationSeconds: 600,
+            backchannelingEnabled: true,
+            analysisPlan: {
+              structuredDataSchema: {
+                type: "object",
+                properties: {
+                  status: {
+                    type: "string",
+                    enum: [
+                      "No_contesto",
+                      "Contacto",
+                      "Información",
+                      "Interés",
+                      "Cita",
+                      "Negociación",
+                      "Cierre",
+                      "Pérdida",
+                    ],
+                    description:
+                      "El estado actual de la venta basado en la interacción.",
                   },
-                  required: [
-                    "status",
-                    "progress",
-                    "description",
-                    "priority",
-                    "cita",
-                  ],
+                  progress: {
+                    type: "number",
+                    description:
+                      "Un número del 0 al 100 que represente el avance según la tabla de estados definida.",
+                  },
+                  description: {
+                    type: "string",
+                    description:
+                      "Un resumen detallado de la conversación, acuerdos y necesidades del cliente.",
+                  },
+                  priority: {
+                    type: "string",
+                    enum: ["Baja", "Media", "Alta"],
+                  },
+                  cita: {
+                    type: "string",
+                    description:
+                      "La fecha y hora de la cita acordada (ej: Lunes 10am). Si no hay, poner 'No definida'.",
+                  },
                 },
+                required: [
+                  "status",
+                  "progress",
+                  "description",
+                  "priority",
+                  "cita",
+                ],
               },
-              model: {
-                provider: "openai",
-                model: "gpt-4o",
-                messages: [
-                  {
-                    role: "system",
-                    content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. 
+            },
+            model: {
+              provider: "openai",
+              model: "gpt-4o",
+              messages: [
+                {
+                  role: "system",
+                  content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. 
                     
                     CONTEXTO TEMPORAL: Hoy es ${fechaHoy}.
                     
@@ -206,71 +198,71 @@ exports.makeSmartCall = async (req, res) => {
                     - customerName: "${customer.fullName}"
                     - company: "${company}"
                     - cita: (El horario acordado en el formato especificado)`,
-                  },
-                ],
-                tools: [
-                  {
-                    type: "function",
-                    messages: [
-                      {
-                        type: "request-start",
-                        content: "Un momento, estoy agendando tu cita...",
-                      },
-                    ],
-                    function: {
-                      name: "create_task",
-                      description:
-                        "Registra una cita o tarea con fecha y hora en el sistema.",
-                      parameters: {
-                        type: "object",
-                        properties: {
-                          titulo: { type: "string" },
-                          detalle: { type: "string" },
-                          tenantId: { type: "string" },
-                          clientId: { type: "string" },
-                          customerName: { type: "string" },
-                          company: { type: "string" },
-                          cita: { type: "string" },
-                        },
-                        required: [
-                          "titulo",
-                          "detalle",
-                          "tenantId",
-                          "clientId",
-                          "customerName",
-                          "company",
-                          "cita",
-                        ],
-                      },
+                },
+              ],
+              tools: [
+                {
+                  type: "function",
+                  messages: [
+                    {
+                      type: "request-start",
+                      content: "Un momento, estoy agendando tu cita...",
                     },
-                    server: {
-                      url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
+                  ],
+                  function: {
+                    name: "create_task",
+                    description:
+                      "Registra una cita o tarea con fecha y hora en el sistema.",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        titulo: { type: "string" },
+                        detalle: { type: "string" },
+                        tenantId: { type: "string" },
+                        clientId: { type: "string" },
+                        customerName: { type: "string" },
+                        company: { type: "string" },
+                        cita: { type: "string" },
+                      },
+                      required: [
+                        "titulo",
+                        "detalle",
+                        "tenantId",
+                        "clientId",
+                        "customerName",
+                        "company",
+                        "cita",
+                      ],
                     },
                   },
-                ],
-              },
-            },
-            metadata: {
-              tenantId: tenantId,
-              company: company,
-              clientId: customer.clientId,
-              email: email,
+                  server: {
+                    url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
+                  },
+                },
+              ],
             },
           },
-          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
-        );
+          metadata: { tenantId, company, clientId: customer.clientId, email },
+        };
 
+        const response = await axios.post(
+          "https://api.vapi.ai/call/phone",
+          vapiPayload,
+          {
+            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+          },
+        );
         return response.data;
       } catch (err) {
         return {
           error: true,
           customer: customer.fullName,
-          details: err.response?.data,
+          details: err.response?.data || err.message,
         };
       }
     });
 
-    const results = await Promise.all(calls);
+    const results = await Promise.all(callPromises);
     res.status(200).json({ success: true, results });
   } catch (e) {
     res.status(500).json({ error: e.message });
