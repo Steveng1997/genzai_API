@@ -1,12 +1,12 @@
 const dynamoDB = require("../services/dynamo");
 const { GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 
-const TABLE_NAME = process.env.DYNAMODB_TABLE_PLANS;
+const TABLE_PLANS = process.env.DYNAMODB_TABLE_PLANS;
 
 const getAllPlans = async (req, res) => {
   try {
     const data = await dynamoDB.send(
-      new ScanCommand({ TableName: TABLE_NAME }),
+      new ScanCommand({ TableName: TABLE_PLANS }),
     );
     res.status(200).json(data.Items);
   } catch (error) {
@@ -20,7 +20,7 @@ const getPlanById = async (planId) => {
   try {
     const data = await dynamoDB.send(
       new GetCommand({
-        TableName: TABLE_NAME,
+        TableName: TABLE_PLANS,
         Key: { planId: planId },
       }),
     );
