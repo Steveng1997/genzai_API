@@ -30,7 +30,6 @@ const getContentType = (fileName) => {
 };
 
 exports.createProduct = async (req, res) => {
-  console.log("=== INICIO CREATE PRODUCT ===");
   try {
     const {
       tenantId,
@@ -48,9 +47,6 @@ exports.createProduct = async (req, res) => {
     } = req.body;
 
     if (!BUCKET_NAME) {
-      console.error(
-        "❌ ERROR: La variable S3_BUCKET_PRODUCTS no está definida.",
-      );
       throw new Error("S3 Bucket name is missing in environment variables");
     }
 
@@ -62,9 +58,8 @@ exports.createProduct = async (req, res) => {
     let primaryPhotoUrl = "";
 
     if (files && Array.isArray(files)) {
-      for (const [index, file] of files.entries()) {
+      for (const file of files) {
         if (file.fileBase64 && file.fileName) {
-          console.log(`Subiendo archivo [${index}]: ${file.fileName}`);
           const buffer = Buffer.from(file.fileBase64, "base64");
           const fileKey = `products/${tenantId.trim()}/${crypto.randomUUID()}-${file.fileName}`;
           const s3Url = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
@@ -118,10 +113,8 @@ exports.createProduct = async (req, res) => {
       new PutCommand({ TableName: TABLE_PRODUCTS, Item: newProduct }),
     );
 
-    console.log("✅ Producto creado con éxito:", productId);
     res.status(201).json({ message: "Product created", data: newProduct });
   } catch (error) {
-    console.error("=== ERROR EN CREATE PRODUCT ===");
     res.status(500).json({ error: error.message });
   }
 };
@@ -153,7 +146,7 @@ exports.getProductById = async (req, res) => {
         },
       }),
     );
-    
+
     if (!data.Item) return res.status(404).json({ error: "Product not found" });
     res.status(200).json(data.Item);
   } catch (error) {
@@ -217,7 +210,7 @@ exports.updateProduct = async (req, res) => {
             new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key }),
           );
         } catch (s3Err) {
-          console.error("Error deleting from S3:", s3Err);
+          console.error(s3Err);
         }
       }
 

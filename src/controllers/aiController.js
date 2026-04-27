@@ -20,7 +20,7 @@ exports.getConfig = async (req, res) => {
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
       }),
     );
     res.status(200).json(Item || {});
@@ -43,13 +43,12 @@ exports.updatePrompt = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
         UpdateExpression:
-          "SET systemPrompt = :p, updatedAt = :u, tenantId = :t, company = :c, ownerEmail = :e",
+          "SET systemPrompt = :p, updatedAt = :u, company = :c, ownerEmail = :e",
         ExpressionAttributeValues: {
           ":p": endPrompt,
           ":u": new Date().toISOString(),
-          ":t": tenantId,
           ":c": company || "",
           ":e": (email || "").toLowerCase(),
         },
@@ -74,7 +73,7 @@ exports.editPrompt = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
         UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
         ExpressionAttributeValues: {
           ":p": systemPrompt,
@@ -97,7 +96,7 @@ exports.askRiley = async (req, res) => {
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
       }),
     );
     const assistantId = Item?.openaiAssistantId;
@@ -128,13 +127,12 @@ exports.askRiley = async (req, res) => {
 
 exports.analyzeProductImage = async (req, res) => {
   try {
-    const { tenantId } = req.body;
+    const { tenantId, email } = req.body;
     const file = req.file;
     if (!file)
       return res.status(400).json({ error: "No image or document provided" });
 
     let messageContent = [];
-
     if (file.mimetype.startsWith("image/")) {
       const base64Image = file.buffer.toString("base64");
       messageContent = [
@@ -178,7 +176,10 @@ exports.analyzeProductImage = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_USERS,
-        Key: { businessId: tenantId },
+        Key: {
+          tenantId: tenantId,
+          email: email.toLowerCase().trim(),
+        },
         UpdateExpression: `ADD ${counterField} :inc SET updatedAt = :u`,
         ExpressionAttributeValues: {
           ":inc": 1,
@@ -202,7 +203,7 @@ exports.setupAssistant = async (req, res) => {
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
       }),
     );
     const existingFileNames = Item?.fileNames || [];
@@ -267,7 +268,10 @@ exports.setupAssistant = async (req, res) => {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: TABLE_USERS,
-          Key: { businessId: tenantId },
+          Key: {
+            tenantId: tenantId,
+            email: email.toLowerCase().trim(),
+          },
           UpdateExpression:
             "ADD totalTechnicalSheets :docs, totalProductImages :imgs SET updatedAt = :u",
           ExpressionAttributeValues: {
@@ -336,9 +340,9 @@ exports.setupAssistant = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
         UpdateExpression:
-          "SET openaiAssistantId = :oa, assistantId = :va, vapiPhoneNumberId = :vpi, openaiFileIds = :f, fileNames = :fn, updatedAt = :u, company = :c, ownerEmail = :e, tenantId = :t",
+          "SET openaiAssistantId = :oa, assistantId = :va, vapiPhoneNumberId = :vpi, openaiFileIds = :f, fileNames = :fn, updatedAt = :u, company = :c, ownerEmail = :e",
         ExpressionAttributeValues: {
           ":oa": openaiId,
           ":va": vapiAssistantId || "4c266662-68db-4046-a13f-8c021c84919c",
@@ -348,7 +352,6 @@ exports.setupAssistant = async (req, res) => {
           ":u": new Date().toISOString(),
           ":c": company || "Sin Empresa",
           ":e": (email || "").toLowerCase(),
-          ":t": tenantId,
         },
       }),
     );

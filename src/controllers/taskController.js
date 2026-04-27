@@ -201,7 +201,7 @@ exports.handleVapiWebhook = async (req, res) => {
       new PutCommand({
         TableName: TABLE_HISTORY,
         Item: {
-          id: String(call?.id || Date.now()),
+          idConsumptionHistory : String(call?.id || Date.now()),
           tenantId: tenantId ? String(tenantId).trim() : "SIN_TENANT",
           clientId: clientId ? String(clientId).trim() : "N/A",
           customerName,

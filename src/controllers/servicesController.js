@@ -141,15 +141,18 @@ exports.completeService = async (req, res) => {
     if (!tenantId || !serviceId) {
       return res.status(400).json({ error: "Faltan parámetros" });
     }
-    await dynamoDB.send(
+    await docClient.send(
       new UpdateCommand({
         TableName: TABLE_SERVICES,
         Key: {
           tenantId: String(tenantId).trim(),
-          serviceId: Number(serviceId),
+          serviceId: String(serviceId).trim(),
         },
-        UpdateExpression: "set isCompleted = :val",
-        ExpressionAttributeValues: { ":val": isCompleted },
+        UpdateExpression: "set isCompleted = :val, updatedAt = :u",
+        ExpressionAttributeValues: {
+          ":val": isCompleted,
+          ":u": new Date().toISOString(),
+        },
       }),
     );
     res.status(200).json({ success: true });

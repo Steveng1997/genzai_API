@@ -1,15 +1,13 @@
 const dynamoDB = require("../services/dynamo");
-
 const {
   PutCommand,
   UpdateCommand,
   QueryCommand,
 } = require("@aws-sdk/lib-dynamodb");
-
 const { getPlanById } = require("./planController");
 const crypto = require("crypto");
 
-exports.confirmPayment = async (req, res) => {
+exports.processPayment = async (req, res) => {
   const {
     email,
     company,
@@ -61,9 +59,12 @@ exports.confirmPayment = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: process.env.DYNAMODB_TABLE_USERS,
-        Key: { email: emailKey },
+        Key: {
+          tenantId: tenantId,
+          email: emailKey,
+        },
         UpdateExpression:
-          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v, currentPlan = :p, whatsappEnabled = :w, company = :c, tenantId = :t",
+          "SET availableMinutes = :m, planStatus = :s, expirationDate = :v, currentPlan = :p, whatsappEnabled = :w, company = :c",
         ExpressionAttributeValues: {
           ":m": Number(planDetails.minutes),
           ":s": "active",
@@ -71,7 +72,6 @@ exports.confirmPayment = async (req, res) => {
           ":p": planDetails.title,
           ":w": planDetails.whatsappApi !== "No incluido",
           ":c": company,
-          ":t": tenantId,
         },
       }),
     );

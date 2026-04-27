@@ -18,12 +18,17 @@ exports.login = async (req, res) => {
     let user = null;
 
     const byEmail = await dynamoDB.send(
-      new GetCommand({
+      new QueryCommand({
         TableName: "Users",
-        Key: { email: cleanId },
+        IndexName: "EmailIndex",
+        KeyConditionExpression: "email = :e",
+        ExpressionAttributeValues: { ":e": cleanId },
       }),
     );
-    user = byEmail.Item;
+
+    if (byEmail.Items?.length > 0) {
+      user = byEmail.Items[0];
+    }
 
     if (!user) {
       const byUser = await dynamoDB.send(
@@ -46,14 +51,17 @@ exports.login = async (req, res) => {
     if (!user.password || user.password === "") {
       return res
         .status(200)
-        .json({ status: "NEED_REGISTER", email: user.email });
+        .json({
+          status: "NEED_REGISTER",
+          email: user.email,
+          tenantId: user.tenantId,
+        });
     }
 
     if (!password) {
       return res.status(200).json({ status: "NEED_PASSWORD" });
     }
 
-    // COMPARACIÓN SEGURA: Comparamos texto plano con el hash guardado
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Contraseña incorrecta" });
@@ -67,28 +75,31 @@ exports.login = async (req, res) => {
 };
 
 exports.completeProfile = async (req, res) => {
-  const { email, fullName, username, phoneNumber, password } = req.body;
+  const { email, tenantId, fullName, username, phoneNumber, password } =
+    req.body;
 
-  if (!email || !username || !password) {
+  if (!email || !tenantId || !username || !password) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 
   try {
-    // HASHEO: Encriptamos la clave antes de guardarla
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
     await dynamoDB.send(
       new UpdateCommand({
         TableName: "Users",
-        Key: { email: email.toLowerCase().trim() },
+        Key: {
+          tenantId: tenantId,
+          email: email.toLowerCase().trim(),
+        },
         UpdateExpression:
           "SET fullName = :fn, username = :un, phoneNumber = :pn, password = :pw, profileCompleted = :pc",
         ExpressionAttributeValues: {
           ":fn": fullName.trim(),
           ":un": username.toLowerCase().trim(),
           ":pn": phoneNumber.trim(),
-          ":pw": hashedPassword, // Guardamos la clave encriptada
+          ":pw": hashedPassword,
           ":pc": true,
         },
       }),
@@ -101,20 +112,23 @@ exports.completeProfile = async (req, res) => {
 };
 
 exports.getProfile = async (req, res) => {
-  const { email } = req.query;
-  if (!email) return res.status(400).json({ message: "Email requerido" });
+  const { email, tenantId } = req.query;
+  if (!email || !tenantId)
+    return res.status(400).json({ message: "Email y tenantId requeridos" });
 
   try {
     const response = await dynamoDB.send(
       new GetCommand({
         TableName: "Users",
-        Key: { email: email.toLowerCase().trim() },
+        Key: {
+          tenantId: tenantId,
+          email: email.toLowerCase().trim(),
+        },
       }),
     );
     if (!response.Item)
       return res.status(404).json({ message: "Usuario no encontrado" });
 
-    // Opcional: Eliminar el hash de la respuesta por seguridad
     const userData = response.Item;
     delete userData.password;
 

@@ -6,15 +6,13 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_REPORTS = process.env.DYNAMODB_TABLE_REPORTS;
 
 exports.handleVapiWebhook = async (req, res) => {
-  if (req.headers["x-vapi-secret"] !== process.env.VAPI_SECRET_KEY) {
+  const vapiSecret = process.env.VAPI_SECRET_KEY;
+
+  if (req.headers["x-vapi-secret"] !== vapiSecret) {
     return res.status(401).json({ message: "No autorizado" });
   }
 
   const payload = req.body;
-
-  if (vapiHeaderSecret !== localSecret) {
-    return res.status(401).json({ message: "No autorizado" });
-  }
 
   if (payload.message?.type !== "end-of-call-report") {
     return res.status(200).send();
@@ -44,9 +42,8 @@ exports.handleVapiWebhook = async (req, res) => {
 
     const analysis = JSON.parse(completion.choices[0].message.content);
 
-    // Guardar en DynamoDB
     const reportItem = {
-      tenantId: tenantId || "unknown",
+      tenantId: (tenantId || "unknown").trim(),
       callId: call.id,
       customerName: customer?.name || "Cliente Desconocido",
       customerPhone: customer?.number || "Sin número",
@@ -67,7 +64,6 @@ exports.handleVapiWebhook = async (req, res) => {
 
     res.status(200).json({ success: true });
   } catch (error) {
-    console.error("Error al procesar el informe:", error);
-    res.status(500).json({ message: "Error interno" });
+    res.status(500).json({ message: "Error interno", error: error.message });
   }
 };

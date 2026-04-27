@@ -90,7 +90,7 @@ exports.saveClient = async (req, res) => {
 
     const endChannels = Array.isArray(contactChannel)
       ? contactChannel
-      : [contactChannel.toString().trim()];
+      : [contactChannel ? contactChannel.toString().trim() : "Llamada"];
 
     const isCallActive = endChannels.some((c) =>
       c.toString().toLowerCase().includes("llamada"),

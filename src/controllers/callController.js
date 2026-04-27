@@ -20,7 +20,10 @@ exports.makeSmartCall = async (req, res) => {
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
-        Key: { email: email },
+        Key: {
+          tenantId: tenantId,
+          email: email,
+        },
       }),
     );
 
@@ -36,7 +39,7 @@ exports.makeSmartCall = async (req, res) => {
     const { Item: config } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
-        Key: { businessId: tenantId },
+        Key: { tenantId: tenantId },
       }),
     );
 
