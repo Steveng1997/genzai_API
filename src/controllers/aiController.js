@@ -130,15 +130,15 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
 
     for (const file of files) {
-      const upload = await openai.files.create({
+      const fileContext = await openai.files.create({
         file: {
-          url: "file.originalname",
+          url: file.originalname,
           content: file.buffer,
-          name: file.originalname,
         },
         purpose: "assistants",
       });
-      newFileIds.push(upload.id);
+
+      newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
     }
 
@@ -148,7 +148,7 @@ exports.setupAssistant = async (req, res) => {
     if (newFileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `VS-${tenantId}-${Date.now()}`,
-        file_ids: newFileIds, // Solo los nuevos para este VS
+        file_ids: finalFileIds,
       });
 
       await openai.beta.assistants.update(assistantId, {
