@@ -9,20 +9,45 @@ const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
 /**
+ * Función auxiliar para actualizar estadísticas en DynamoDB
+ */
+const updateCounter = async (tenantId, email, isTechnicalSheet) => {
+  const field = isTechnicalSheet
+    ? "totalTechnicalSheets"
+    : "totalProductImages";
+  console.log(`📊 Incrementando contador: ${field} para ${email}`);
+  try {
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: TABLE_USERS,
+        Key: {
+          tenantId: tenantId.toString(),
+          email: email.toLowerCase().trim(),
+        },
+        UpdateExpression: `ADD ${field} :inc SET updatedAt = :u`,
+        ExpressionAttributeValues: {
+          ":inc": 1,
+          ":u": new Date().toISOString(),
+        },
+      }),
+    );
+  } catch (error) {
+    console.error("⚠️ Error actualizando DynamoDB:", error.message);
+  }
+};
+
+/**
  * Crea un asistente en OpenAI si no existe
  */
 const createOpenAIAssistant = async (company) => {
-  console.log(
-    `🤖 [OpenAI] Creando asistente para: ${company || "Empresa genérica"}`,
-  );
+  console.log(`🤖 [OpenAI] Creando asistente para: ${company || "Empresa"}`);
   try {
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company || "Empresa"}`,
-      instructions: `Eres Riley, soporte inteligente de ${company || "la empresa"}. Usa tus archivos y herramientas para ayudar al usuario de forma precisa.`,
+      instructions: `Eres Riley, experto en análisis de documentos y fichas técnicas. Tu objetivo es identificar si un archivo es una ficha técnica industrial o una simple imagen de producto.`,
       model: "gpt-4o",
       tools: [{ type: "file_search" }],
     });
-    console.log(`✅ [OpenAI] Asistente creado ID: ${assistant.id}`);
     return assistant.id;
   } catch (error) {
     console.error("❌ [OpenAI] Error creando asistente:", error.message);
@@ -31,11 +56,10 @@ const createOpenAIAssistant = async (company) => {
 };
 
 /**
- * Obtiene la configuración de un tenant
+ * 1. OBTENER CONFIGURACIÓN
  */
 exports.getConfig = async (req, res) => {
   const { tenantId } = req.params;
-  console.log(`🔍 [DynamoDB] Consultando config para tenantId: ${tenantId}`);
   try {
     const { Items } = await dynamoDB.send(
       new ScanCommand({
@@ -46,13 +70,12 @@ exports.getConfig = async (req, res) => {
     );
     res.status(200).json(Items?.[0] || {});
   } catch (e) {
-    console.error("❌ [Internal] Error en getConfig:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 /**
- * Chatea con Riley (Assistant API)
+ * 2. CHAT CON RILEY (Assistant API)
  */
 exports.askRiley = async (req, res) => {
   const { message, tenantId, company } = req.body;
@@ -60,9 +83,6 @@ exports.askRiley = async (req, res) => {
     return res.status(400).json({ error: "Faltan datos" });
 
   try {
-    console.log(`💬 [Chat] Nueva consulta de tenant: ${tenantId}`);
-
-    // 1. Obtener Configuración
     const { Items } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CONFIGS,
@@ -72,32 +92,13 @@ exports.askRiley = async (req, res) => {
     );
 
     let Item = Items?.[0];
-    let assistantId = Item?.openaiAssistantId;
+    let assistantId =
+      Item?.openaiAssistantId || (await createOpenAIAssistant(company));
     let agentId = Item?.agentId || uuidv4();
 
-    // 2. Validar o Crear Asistente
-    if (!assistantId) {
-      console.warn("⚠️ No se encontró AssistantID en DB. Creando uno nuevo...");
-      assistantId = await createOpenAIAssistant(company || Item?.company);
-      await dynamoDB.send(
-        new UpdateCommand({
-          TableName: TABLE_CONFIGS,
-          Key: { tenantId: tenantId.toString(), agentId: agentId },
-          UpdateExpression:
-            "SET openaiAssistantId = :oa, company = :c, updatedAt = :u",
-          ExpressionAttributeValues: {
-            ":oa": assistantId,
-            ":c": company || "Empresa Genérica",
-            ":u": new Date().toISOString(),
-          },
-        }),
-      );
-    }
-
-    // 3. Validar o Crear Thread
+    // Validar o Crear Thread
     let threadId = Item?.activeThreadId;
     if (!threadId) {
-      console.log("🧵 Creando nuevo Thread de conversación...");
       const thread = await openai.beta.threads.create();
       threadId = thread.id;
       await dynamoDB.send(
@@ -110,13 +111,11 @@ exports.askRiley = async (req, res) => {
       );
     }
 
-    // 4. Enviar Mensaje y Ejecutar
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: message,
     });
 
-    console.log("⏳ [OpenAI] Ejecutando y esperando respuesta (Poll)...");
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
@@ -126,35 +125,27 @@ exports.askRiley = async (req, res) => {
       const lastAssistantMessage = messagesList.data.find(
         (m) => m.role === "assistant",
       );
-      const reply =
-        lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.";
-      console.log("✅ [OpenAI] Respuesta recibida");
-      res.status(200).json({ reply });
+      res.status(200).json({
+        reply:
+          lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
+      });
     } else {
-      console.error(`❌ [OpenAI] Run terminó con estado: ${run.status}`);
       res.status(500).json({ error: `OpenAI Status: ${run.status}` });
     }
   } catch (e) {
-    console.error("❌ [Internal] Error fatal en askRiley:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 /**
- * Configura archivos y Vector Store del asistente
+ * 3. SETUP ASSISTANT (Carga masiva de archivos base)
  */
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   const { email, company, tenantId } = req.body;
-
-  console.log(
-    `🚀 [Setup] Iniciando carga de archivos para: ${company || "Desconocido"} (${tenantId})`,
-  );
-
   if (!tenantId) return res.status(400).json({ message: "tenantId requerido" });
 
   try {
-    // 1. Obtener estado actual
     const { Items } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CONFIGS,
@@ -171,24 +162,11 @@ exports.setupAssistant = async (req, res) => {
     const newFileIds = [];
     const newFileNames = [];
 
-    // 2. Subida de archivos a OpenAI
     for (const file of files) {
-      console.log(
-        `📤 [OpenAI] Intentando subir: ${file.originalname} (${file.size} bytes)`,
-      );
-
-      /**
-       * CORRECCIÓN 413: Usamos OpenAI.toFile para envolver el buffer
-       * correctamente como un multipart/form-data válido.
-       */
       const fileContext = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
-
-      console.log(
-        `✅ [OpenAI] Archivo subido exitosamente ID: ${fileContext.id}`,
-      );
       newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
     }
@@ -196,27 +174,17 @@ exports.setupAssistant = async (req, res) => {
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
     const finalFileNames = [...(Item?.fileNames || []), ...newFileNames];
 
-    // 3. Gestión de Vector Store
     if (newFileIds.length > 0) {
-      console.log(
-        `📂 [OpenAI] Creando Vector Store para ${newFileIds.length} archivos...`,
-      );
       const vectorStore = await openai.beta.vectorStores.create({
         name: `VS-${tenantId}-${Date.now()}`,
         file_ids: finalFileIds,
       });
-      console.log(`✅ [OpenAI] Vector Store creado: ${vectorStore.id}`);
 
-      console.log("🔄 [OpenAI] Vinculando Vector Store al Asistente...");
       await openai.beta.assistants.update(assistantId, {
-        tool_resources: {
-          file_search: { vector_store_ids: [vectorStore.id] },
-        },
+        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
     }
 
-    // 4. Persistencia en DynamoDB
-    console.log("💾 [DynamoDB] Guardando IDs de archivos y asistente...");
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -229,81 +197,103 @@ exports.setupAssistant = async (req, res) => {
           ":fn": finalFileNames,
           ":u": new Date().toISOString(),
           ":c": company || Item?.company || "Empresa",
-          ":e": email?.toLowerCase() || Item?.ownerEmail,
+          ":e": email?.toLowerCase() || Item?.ownerEmail || "N/A",
         },
       }),
     );
 
-    console.log("✨ [Setup] Proceso finalizado con éxito.");
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
-    console.error("❌ [Critical] Error en setupAssistant:", e);
-    // Enviamos el stack solo en desarrollo/logs, aquí lo enviamos para debuggear
-    res
-      .status(500)
-      .json({ error: e.message, detail: "Error en proceso de archivos" });
+    res.status(500).json({ error: e.message });
   }
 };
 
 /**
- * Analiza imagen de producto usando GPT-4o Vision
+ * 4. ANALIZADOR MULTIMODAL (IMÁGENES + PDF)
+ * Procesa archivos individuales para contar estadísticas.
  */
 exports.analyzeProductImage = async (req, res) => {
   try {
     const { tenantId, email } = req.body;
     const file = req.file;
-    console.log(`📸 [Vision] Analizando imagen para tenant: ${tenantId}`);
 
     if (!file) return res.status(400).json({ error: "No file provided" });
+    console.log(`🚀 Analizando: ${file.originalname}`);
 
-    let content = [
-      {
-        type: "text",
-        text: 'Analyze image. Return JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
-      },
-    ];
+    let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
 
+    // --- CASO: IMÁGENES (JPG, JPEG, PNG, WEBP) ---
     if (file.mimetype.startsWith("image/")) {
-      content.push({
-        type: "image_url",
-        image_url: {
-          url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`,
-        },
+      console.log("📸 Usando GPT-4o Vision...");
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: 'Analiza esta imagen. Determina si es una "Ficha Técnica" (contiene tablas técnicas, medidas, materiales) o una "Foto de Producto". Retorna JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`,
+                },
+              },
+            ],
+          },
+        ],
+        response_format: { type: "json_object" },
       });
+      result = JSON.parse(response.choices[0].message.content);
     }
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content }],
-      response_format: { type: "json_object" },
-    });
+    // --- CASO: DOCUMENTOS PDF ---
+    else if (file.mimetype === "application/pdf") {
+      console.log("📄 Usando Assistant para leer PDF...");
 
-    const data = JSON.parse(response.choices[0].message.content);
-    const field = data.isTechnicalSheet
-      ? "totalTechnicalSheets"
-      : "totalProductImages";
+      const openAIFile = await openai.files.create({
+        file: await OpenAI.toFile(file.buffer, file.originalname),
+        purpose: "assistants",
+      });
 
-    console.log(`📊 [Vision] Resultado: ${data.name}. Tipo: ${field}`);
-
-    // Actualizar estadísticas del usuario
-    await dynamoDB.send(
-      new UpdateCommand({
-        TableName: TABLE_USERS,
-        Key: {
-          tenantId: tenantId.toString(),
-          email: email.toLowerCase().trim(),
+      const run = await openai.beta.threads.createAndRunAndPoll({
+        assistant_id: await createOpenAIAssistant("Analizador Pro"),
+        thread: {
+          messages: [
+            {
+              role: "user",
+              content:
+                "Analiza el PDF adjunto y dime si es una ficha técnica. Responde solo JSON: {isTechnicalSheet: boolean, name: string, price: number}",
+              attachments: [
+                { file_id: openAIFile.id, tools: [{ type: "file_search" }] },
+              ],
+            },
+          ],
         },
-        UpdateExpression: `ADD ${field} :inc SET updatedAt = :u`,
-        ExpressionAttributeValues: {
-          ":inc": 1,
-          ":u": new Date().toISOString(),
-        },
-      }),
-    );
+      });
 
-    res.status(200).json(data);
+      if (run.status === "completed") {
+        const messages = await openai.beta.threads.messages.list(run.thread_id);
+        const text = messages.data[0].content[0].text.value;
+        const jsonMatch = text.match(/\{.*\}/s);
+        result = JSON.parse(jsonMatch[0]);
+      }
+
+      await openai.files.del(openAIFile.id); // Borrar archivo temporal
+    } else {
+      return res
+        .status(400)
+        .json({ error: "Formato no permitido (Solo Imagen o PDF)" });
+    }
+
+    // --- ACTUALIZAR CONTADORES ---
+    await updateCounter(tenantId, email, result.isTechnicalSheet);
+
+    res.status(200).json(result);
   } catch (e) {
-    console.error("❌ [Vision] Error en analyzeProductImage:", e.message);
+    console.error("❌ Error en análisis:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
