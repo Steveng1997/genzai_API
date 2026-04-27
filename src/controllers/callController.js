@@ -1,4 +1,8 @@
-const { GetCommand, ScanCommand: ScanCalls } = require("@aws-sdk/lib-dynamodb");
+const {
+  GetCommand,
+  ScanCommand: ScanCalls,
+  UpdateCommand,
+} = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 const axios = require("axios");
 
@@ -12,15 +16,11 @@ exports.makeSmartCall = async (req, res) => {
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
 
-  console.log(
-    `🚀 Iniciando makeSmartCall para tenantId: ${tenantId}, empresa: ${company}`,
-  );
+  console.log(`🚀 Iniciando makeSmartCall para tenantId: ${tenantId}`);
 
   try {
-    if (!tenantId) {
-      console.error("❌ Error: tenantId no proporcionado");
+    if (!tenantId)
       return res.status(400).json({ message: "tenantId requerido" });
-    }
 
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
@@ -29,15 +29,10 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    const availableMinutes = userDoc?.availableMinutes || 0;
-    console.log(`📊 Minutos disponibles para ${email}: ${availableMinutes}`);
-
-    if (availableMinutes <= 0) {
-      return res.status(403).json({
-        success: false,
-        message: "Sin minutos disponibles",
-        minutes: availableMinutes,
-      });
+    if ((userDoc?.availableMinutes || 0) <= 0) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Sin minutos disponibles" });
     }
 
     const { Items: configs } = await dynamoDB.send(
@@ -48,12 +43,53 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    const config = configs?.[0];
-    if (!config || !config.assistantId) {
-      console.error(`⚠️ IA no configurada para tenant: ${tenantId}`);
-      return res
-        .status(404)
-        .json({ message: "IA no configurada para este tenant." });
+    let config = configs?.[0];
+
+    if (!config?.assistantId && config?.openaiAssistantId) {
+      console.log(
+        "🤖 Creando asistente en Vapi automáticamente desde OpenAI...",
+      );
+      try {
+        const vapiRes = await axios.post(
+          "https://api.vapi.ai/assistant",
+          {
+            name: `Riley - ${company}`,
+            model: {
+              provider: "openai",
+              model: "gpt-4o",
+              assistantId: config.openaiAssistantId,
+            },
+            voice: "paula",
+            firstMessage: `Hola, soy Riley de ${company}. ¿Cómo puedo ayudarte?`,
+          },
+          {
+            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+          },
+        );
+
+        const newVapiId = vapiRes.data.id;
+        await dynamoDB.send(
+          new UpdateCommand({
+            TableName: TABLE_CONFIGS,
+            Key: { tenantId: config.tenantId, agentId: config.agentId },
+            UpdateExpression: "SET assistantId = :v",
+            ExpressionAttributeValues: { ":v": newVapiId },
+          }),
+        );
+        config.assistantId = newVapiId;
+        console.log(`✅ Asistente Vapi creado: ${newVapiId}`);
+      } catch (vapiErr) {
+        console.error(
+          "❌ Error creando asistente en Vapi:",
+          vapiErr.response?.data || vapiErr.message,
+        );
+      }
+    }
+
+    if (!config?.assistantId) {
+      return res.status(404).json({
+        message: "Configuración incompleta: falta assistantId en Vapi.",
+      });
     }
 
     const { Items: customers } = await dynamoDB.send(
@@ -65,13 +101,10 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!customers || customers.length === 0) {
-      console.log("ℹ️ No hay clientes con call_active = true");
       return res
         .status(404)
         .json({ message: "No hay clientes activos para llamar." });
     }
-
-    console.log(`📞 Clientes a llamar: ${customers.length}`);
 
     const now = new Date();
     const colombiaDate = new Date(
@@ -80,9 +113,12 @@ exports.makeSmartCall = async (req, res) => {
     const hour = colombiaDate.getHours();
     const fechaHoy = colombiaDate.toISOString().split("T")[0];
 
-    let greeting = "Buenos días";
-    if (hour >= 12 && hour < 18) greeting = "Buenas tardes";
-    else if (hour >= 18 || hour < 5) greeting = "Buenas noches";
+    let greeting =
+      hour >= 12 && hour < 18
+        ? "Buenas tardes"
+        : hour >= 18 || hour < 5
+          ? "Buenas noches"
+          : "Buenos días";
 
     const callPromises = customers.map(async (customer) => {
       try {
@@ -253,37 +289,30 @@ exports.makeSmartCall = async (req, res) => {
               ],
             },
           },
-          metadata: { tenantId, company, clientId: customer.clientId, email },
         };
 
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           vapiPayload,
-          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
+          {
+            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+          },
         );
 
-        console.log(
-          `✅ Llamada enviada exitosamente para: ${customer.fullName}`,
-        );
         return response.data;
       } catch (err) {
         console.error(
-          `❌ Error llamando a ${customer.fullName}:`,
+          `❌ Error en llamada a ${customer.fullName}:`,
           err.response?.data || err.message,
         );
-        return {
-          error: true,
-          customer: customer.fullName,
-          details: err.response?.data || err.message,
-        };
+        return { error: true, customer: customer.fullName };
       }
     });
 
     const results = await Promise.all(callPromises);
-    console.log("🏁 Proceso de llamadas finalizado.");
     res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error("🔥 Error crítico en makeSmartCall:", e.message);
+    console.error("🔥 Error crítico:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
