@@ -35,7 +35,11 @@ const createOpenAIAssistant = async (company) => {
   try {
     const assistant = await openai.beta.assistants.create({
       name: `Riley - ${company || "Empresa"}`,
-      instructions: `Eres Riley, experto en análisis de documentos y fichas técnicas. Identifica si es una ficha técnica industrial o imagen de producto.`,
+      instructions: `Eres Riley, experto en análisis de documentos industriales. 
+      Tu tarea es clasificar archivos. 
+      - Ficha Técnica: Contiene tablas de especificaciones, dimensiones, datos de rendimiento, materiales o normativas (ej: ISO, ANSI). 
+      - Imagen de Producto: Una fotografía comercial, publicitaria o de catálogo sin datos técnicos profundos.
+      Siempre responde exclusivamente en formato JSON.`,
       model: "gpt-4o",
       tools: [{ type: "file_search" }],
     });
@@ -135,6 +139,7 @@ exports.setupAssistant = async (req, res) => {
     let agentId = Item?.agentId || uuidv4();
     const newFileIds = [];
     const newFileNames = [];
+
     for (const file of files) {
       const fileContext = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname),
@@ -151,7 +156,10 @@ exports.setupAssistant = async (req, res) => {
             {
               role: "user",
               content: [
-                { type: "text", text: 'JSON: {"isTechnicalSheet": boolean}' },
+                {
+                  type: "text",
+                  text: 'Determina si la imagen es una Ficha Técnica (contiene tablas, medidas, especificaciones detalladas) o solo una Imagen de Producto (foto publicitaria). Responde estrictamente JSON: {"isTechnicalSheet": boolean}',
+                },
                 {
                   type: "image_url",
                   image_url: {
@@ -173,7 +181,8 @@ exports.setupAssistant = async (req, res) => {
             messages: [
               {
                 role: "user",
-                content: "JSON: {isTechnicalSheet: boolean}",
+                content:
+                  'Analiza el documento adjunto. Si contiene tablas de datos técnicos, medidas o especificaciones industriales, marca isTechnicalSheet como true. Responde JSON: {"isTechnicalSheet": boolean}',
                 attachments: [
                   { file_id: fileContext.id, tools: [{ type: "file_search" }] },
                 ],
@@ -183,24 +192,27 @@ exports.setupAssistant = async (req, res) => {
         });
         if (run.status === "completed") {
           const msgs = await openai.beta.threads.messages.list(run.thread_id);
-          isSheet = JSON.parse(
-            msgs.data[0].content[0].text.value.match(/\{.*\}/s)[0],
-          ).isTechnicalSheet;
+          const rawResponse = msgs.data[0].content[0].text.value;
+          const jsonMatch = rawResponse.match(/\{.*\}/s);
+          if (jsonMatch) isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet;
         }
       }
       if (email) await updateCounter(tenantId, email, isSheet);
     }
+
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
     const finalFileNames = [...(Item?.fileNames || []), ...newFileNames];
+
     if (newFileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
-        name: `VS-${tenantId}`,
+        name: `VS-${tenantId}-${Date.now()}`,
         file_ids: newFileIds,
       });
       await openai.beta.assistants.update(assistantId, {
         tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
     }
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -229,6 +241,7 @@ exports.analyzeProductImage = async (req, res) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file" });
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
+
     if (file.mimetype.startsWith("image/")) {
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
@@ -238,7 +251,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Busca indicios de datos técnicos, dimensiones o tablas. Si existen, isTechnicalSheet es true. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               },
               {
                 type: "image_url",
@@ -257,14 +270,15 @@ exports.analyzeProductImage = async (req, res) => {
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
+      const tempId = await createOpenAIAssistant("Validator");
       const r = await openai.beta.threads.createAndRunAndPoll({
-        assistant_id: await createOpenAIAssistant("Analizador"),
+        assistant_id: tempId,
         thread: {
           messages: [
             {
               role: "user",
               content:
-                "JSON: {isTechnicalSheet: boolean, name: string, price: number}",
+                'Analiza exhaustivamente el PDF. ¿Es una Ficha Técnica con datos de ingeniería/construcción? JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               attachments: [
                 { file_id: f.id, tools: [{ type: "file_search" }] },
               ],
@@ -274,14 +288,13 @@ exports.analyzeProductImage = async (req, res) => {
       });
       if (r.status === "completed") {
         const m = await openai.beta.threads.messages.list(r.thread_id);
-        result = JSON.parse(
-          m.data[0].content[0].text.value.match(/\{.*\}/s)[0],
-        );
+        const match = m.data[0].content[0].text.value.match(/\{.*\}/s);
+        if (match) result = JSON.parse(match[0]);
       }
       await openai.files.del(f.id);
-    } else {
-      return res.status(400).json({ error: "Formato no válido" });
+      await openai.beta.assistants.del(tempId);
     }
+
     if (email) await updateCounter(tenantId, email, result.isTechnicalSheet);
     res.status(200).json(result);
   } catch (e) {
