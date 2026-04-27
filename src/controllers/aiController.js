@@ -3,23 +3,39 @@ const { v4: uuidv4 } = require("uuid");
 const { UpdateCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
+// Inicialización de OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
+/**
+ * Crea un asistente en OpenAI si no existe
+ */
 const createOpenAIAssistant = async (company) => {
-  console.log("🤖 Creando nuevo asistente para:", company);
-  const assistant = await openai.beta.assistants.create({
-    name: `Riley - ${company || "Empresa"}`,
-    instructions: `Eres Riley, soporte inteligente de ${company || "la empresa"}. Usa tus archivos y herramientas para ayudar al usuario de forma precisa.`,
-    model: "gpt-4o",
-    tools: [{ type: "file_search" }],
-  });
-  return assistant.id;
+  console.log(
+    `🤖 [OpenAI] Creando asistente para: ${company || "Empresa genérica"}`,
+  );
+  try {
+    const assistant = await openai.beta.assistants.create({
+      name: `Riley - ${company || "Empresa"}`,
+      instructions: `Eres Riley, soporte inteligente de ${company || "la empresa"}. Usa tus archivos y herramientas para ayudar al usuario de forma precisa.`,
+      model: "gpt-4o",
+      tools: [{ type: "file_search" }],
+    });
+    console.log(`✅ [OpenAI] Asistente creado ID: ${assistant.id}`);
+    return assistant.id;
+  } catch (error) {
+    console.error("❌ [OpenAI] Error creando asistente:", error.message);
+    throw error;
+  }
 };
 
+/**
+ * Obtiene la configuración de un tenant
+ */
 exports.getConfig = async (req, res) => {
   const { tenantId } = req.params;
+  console.log(`🔍 [DynamoDB] Consultando config para tenantId: ${tenantId}`);
   try {
     const { Items } = await dynamoDB.send(
       new ScanCommand({
@@ -30,18 +46,23 @@ exports.getConfig = async (req, res) => {
     );
     res.status(200).json(Items?.[0] || {});
   } catch (e) {
-    console.error("❌ Error en getConfig:", e.message);
+    console.error("❌ [Internal] Error en getConfig:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
+/**
+ * Chatea con Riley (Assistant API)
+ */
 exports.askRiley = async (req, res) => {
   const { message, tenantId, company } = req.body;
   if (!message || !tenantId)
     return res.status(400).json({ error: "Faltan datos" });
 
   try {
-    console.log("💬 Nueva pregunta para Riley. Tenant:", tenantId);
+    console.log(`💬 [Chat] Nueva consulta de tenant: ${tenantId}`);
+
+    // 1. Obtener Configuración
     const { Items } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CONFIGS,
@@ -54,8 +75,9 @@ exports.askRiley = async (req, res) => {
     let assistantId = Item?.openaiAssistantId;
     let agentId = Item?.agentId || uuidv4();
 
+    // 2. Validar o Crear Asistente
     if (!assistantId) {
-      console.log("⚠️ No hay assistantId, creando uno...");
+      console.warn("⚠️ No se encontró AssistantID en DB. Creando uno nuevo...");
       assistantId = await createOpenAIAssistant(company || Item?.company);
       await dynamoDB.send(
         new UpdateCommand({
@@ -72,9 +94,10 @@ exports.askRiley = async (req, res) => {
       );
     }
 
+    // 3. Validar o Crear Thread
     let threadId = Item?.activeThreadId;
     if (!threadId) {
-      console.log("🧵 Creando nuevo Thread...");
+      console.log("🧵 Creando nuevo Thread de conversación...");
       const thread = await openai.beta.threads.create();
       threadId = thread.id;
       await dynamoDB.send(
@@ -87,12 +110,13 @@ exports.askRiley = async (req, res) => {
       );
     }
 
+    // 4. Enviar Mensaje y Ejecutar
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: message,
     });
 
-    console.log("⏳ Ejecutando Run en OpenAI...");
+    console.log("⏳ [OpenAI] Ejecutando y esperando respuesta (Poll)...");
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
@@ -102,31 +126,35 @@ exports.askRiley = async (req, res) => {
       const lastAssistantMessage = messagesList.data.find(
         (m) => m.role === "assistant",
       );
-      res
-        .status(200)
-        .json({
-          reply:
-            lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
-        });
+      const reply =
+        lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.";
+      console.log("✅ [OpenAI] Respuesta recibida");
+      res.status(200).json({ reply });
     } else {
-      console.error("❌ OpenAI Run falló con status:", run.status);
+      console.error(`❌ [OpenAI] Run terminó con estado: ${run.status}`);
       res.status(500).json({ error: `OpenAI Status: ${run.status}` });
     }
   } catch (e) {
-    console.error("❌ Error en askRiley:", e.message);
+    console.error("❌ [Internal] Error fatal en askRiley:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
+/**
+ * Configura archivos y Vector Store del asistente
+ */
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   const { email, company, tenantId } = req.body;
-  console.log(`🚀 Iniciando setupAssistant para ${company} (${tenantId})`);
+
+  console.log(
+    `🚀 [Setup] Iniciando carga de archivos para: ${company || "Desconocido"} (${tenantId})`,
+  );
 
   if (!tenantId) return res.status(400).json({ message: "tenantId requerido" });
 
   try {
-    console.log("🔍 Buscando configuración en DynamoDB...");
+    // 1. Obtener estado actual
     const { Items } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CONFIGS,
@@ -143,16 +171,24 @@ exports.setupAssistant = async (req, res) => {
     const newFileIds = [];
     const newFileNames = [];
 
+    // 2. Subida de archivos a OpenAI
     for (const file of files) {
-      console.log(`📤 Subiendo archivo a OpenAI: ${file.originalname}`);
+      console.log(
+        `📤 [OpenAI] Intentando subir: ${file.originalname} (${file.size} bytes)`,
+      );
+
+      /**
+       * CORRECCIÓN 413: Usamos OpenAI.toFile para envolver el buffer
+       * correctamente como un multipart/form-data válido.
+       */
       const fileContext = await openai.files.create({
-        file: {
-          url: file.originalname,
-          content: file.buffer,
-        },
+        file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
-      console.log(`✅ Archivo subido con éxito ID: ${fileContext.id}`);
+
+      console.log(
+        `✅ [OpenAI] Archivo subido exitosamente ID: ${fileContext.id}`,
+      );
       newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
     }
@@ -160,24 +196,27 @@ exports.setupAssistant = async (req, res) => {
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
     const finalFileNames = [...(Item?.fileNames || []), ...newFileNames];
 
+    // 3. Gestión de Vector Store
     if (newFileIds.length > 0) {
-      console.log("📂 Creando Vector Store...");
+      console.log(
+        `📂 [OpenAI] Creando Vector Store para ${newFileIds.length} archivos...`,
+      );
       const vectorStore = await openai.beta.vectorStores.create({
         name: `VS-${tenantId}-${Date.now()}`,
         file_ids: finalFileIds,
       });
-      console.log(`✅ Vector Store creado: ${vectorStore.id}`);
+      console.log(`✅ [OpenAI] Vector Store creado: ${vectorStore.id}`);
 
-      console.log("🔄 Vinculando Vector Store al Asistente...");
+      console.log("🔄 [OpenAI] Vinculando Vector Store al Asistente...");
       await openai.beta.assistants.update(assistantId, {
         tool_resources: {
           file_search: { vector_store_ids: [vectorStore.id] },
         },
       });
-      console.log("✅ Asistente actualizado correctamente");
     }
 
-    console.log("💾 Actualizando DynamoDB...");
+    // 4. Persistencia en DynamoDB
+    console.log("💾 [DynamoDB] Guardando IDs de archivos y asistente...");
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -194,21 +233,28 @@ exports.setupAssistant = async (req, res) => {
         },
       }),
     );
-    console.log("✨ Proceso completado con éxito");
+
+    console.log("✨ [Setup] Proceso finalizado con éxito.");
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
-    console.error("❌ Error FATAL en setupAssistant:", e);
-    res.status(500).json({ error: e.message, stack: e.stack });
+    console.error("❌ [Critical] Error en setupAssistant:", e);
+    // Enviamos el stack solo en desarrollo/logs, aquí lo enviamos para debuggear
+    res
+      .status(500)
+      .json({ error: e.message, detail: "Error en proceso de archivos" });
   }
 };
 
+/**
+ * Analiza imagen de producto usando GPT-4o Vision
+ */
 exports.analyzeProductImage = async (req, res) => {
   try {
     const { tenantId, email } = req.body;
     const file = req.file;
-    console.log("📸 Analizando imagen de producto...");
+    console.log(`📸 [Vision] Analizando imagen para tenant: ${tenantId}`);
 
-    if (!file) return res.status(400).json({ error: "No file" });
+    if (!file) return res.status(400).json({ error: "No file provided" });
 
     let content = [
       {
@@ -237,10 +283,9 @@ exports.analyzeProductImage = async (req, res) => {
       ? "totalTechnicalSheets"
       : "totalProductImages";
 
-    console.log(
-      `📊 Imagen identificada como: ${field}. Actualizando usuario...`,
-    );
+    console.log(`📊 [Vision] Resultado: ${data.name}. Tipo: ${field}`);
 
+    // Actualizar estadísticas del usuario
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_USERS,
@@ -258,7 +303,7 @@ exports.analyzeProductImage = async (req, res) => {
 
     res.status(200).json(data);
   } catch (e) {
-    console.error("❌ Error en analyzeProductImage:", e.message);
+    console.error("❌ [Vision] Error en analyzeProductImage:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
