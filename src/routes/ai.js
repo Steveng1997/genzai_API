@@ -21,8 +21,12 @@ router.post(
   aiController.setupAssistant,
 );
 
-router.post("/update-prompt", aiController.updatePrompt);
-router.post("/edit-prompt", aiController.editPrompt);
 router.post("/ask-riley", aiController.askRiley);
+
+router.post(
+  "/analyze-product",
+  upload.single("file"),
+  aiController.analyzeProductImage,
+);
 
 module.exports = router;
