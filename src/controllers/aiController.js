@@ -31,20 +31,26 @@ exports.getConfig = async (req, res) => {
 
 exports.askRiley = async (req, res) => {
   const { message, tenantId } = req.body;
+
   if (!message || !tenantId) {
     return res.status(400).json({ error: "Faltan datos" });
   }
+
   try {
     const { Item } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
+        Key: { tenantId: tenantId.toString() },
       }),
     );
+
     const assistantId = Item?.openaiAssistantId;
     if (!assistantId) {
-      return res.status(404).json({ error: "Asistente no configurado." });
+      return res
+        .status(404)
+        .json({ error: "Asistente no configurado en esta cuenta." });
     }
+
     let threadId = Item?.activeThreadId;
     if (!threadId) {
       const thread = await openai.beta.threads.create();
@@ -52,19 +58,22 @@ exports.askRiley = async (req, res) => {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: TABLE_CONFIGS,
-          Key: { tenantId: tenantId },
+          Key: { tenantId: tenantId.toString() },
           UpdateExpression: "SET activeThreadId = :t",
           ExpressionAttributeValues: { ":t": threadId },
         }),
       );
     }
+
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: message,
     });
+
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
+
     if (run.status === "completed") {
       const messagesList = await openai.beta.threads.messages.list(threadId);
       const lastAssistantMessage = messagesList.data.find(
@@ -74,14 +83,18 @@ exports.askRiley = async (req, res) => {
         const reply = lastAssistantMessage.content[0].text.value;
         res.status(200).json({ reply });
       } else {
-        res.status(200).json({ reply: "No se generó respuesta." });
+        res.status(200).json({ reply: "Riley no generó texto." });
       }
     } else {
-      res.status(500).json({ error: run.status });
+      res.status(500).json({ error: `Estado de OpenAI: ${run.status}` });
     }
   } catch (e) {
-    console.error("❌ Error en askRiley:", e);
-    res.status(500).json({ error: e.message });
+    console.error("❌ Detalle del error en DynamoDB:", e);
+    res.status(500).json({
+      error: "Error de base de datos",
+      detalle: e.message,
+      checkKey: tenantId,
+    });
   }
 };
 
@@ -124,7 +137,10 @@ exports.analyzeProductImage = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_USERS,
-        Key: { tenantId: tenantId, email: email.toLowerCase().trim() },
+        Key: {
+          tenantId: tenantId.toString(),
+          email: email.toLowerCase().trim(),
+        },
         UpdateExpression: `ADD ${counterField} :inc SET updatedAt = :u`,
         ExpressionAttributeValues: {
           ":inc": 1,
@@ -200,7 +216,10 @@ exports.setupAssistant = async (req, res) => {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: TABLE_USERS,
-          Key: { tenantId: tenantId, email: email.toLowerCase().trim() },
+          Key: {
+            tenantId: tenantId.toString(),
+            email: email.toLowerCase().trim(),
+          },
           UpdateExpression:
             "ADD totalTechnicalSheets :docs, totalProductImages :imgs SET updatedAt = :u",
           ExpressionAttributeValues: {
@@ -261,7 +280,7 @@ exports.setupAssistant = async (req, res) => {
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
+        Key: { tenantId: tenantId.toString() },
         UpdateExpression:
           "SET openaiAssistantId = :oa, assistantId = :va, vapiPhoneNumberId = :vpi, openaiFileIds = :f, fileNames = :fn, updatedAt = :u, company = :c, ownerEmail = :e",
         ExpressionAttributeValues: {
