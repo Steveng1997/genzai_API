@@ -46,9 +46,7 @@ exports.makeSmartCall = async (req, res) => {
     let config = configs?.[0];
 
     if (!config?.assistantId && config?.openaiAssistantId) {
-      console.log(
-        "🤖 Creando asistente en Vapi automáticamente desde OpenAI...",
-      );
+      console.log("🤖 Creando asistente en Vapi automáticamente...");
       try {
         const vapiRes = await axios.post(
           "https://api.vapi.ai/assistant",
@@ -57,9 +55,17 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              assistantId: config.openaiAssistantId,
+              messages: [
+                {
+                  role: "system",
+                  content: `Vinculado a OpenAI Assistant: ${config.openaiAssistantId}`,
+                },
+              ],
             },
-            voice: "paula",
+            voice: {
+              provider: "11labs",
+              voiceId: "paula",
+            },
             firstMessage: `Hola, soy Riley de ${company}. ¿Cómo puedo ayudarte?`,
           },
           {
@@ -77,11 +83,11 @@ exports.makeSmartCall = async (req, res) => {
           }),
         );
         config.assistantId = newVapiId;
-        console.log(`✅ Asistente Vapi creado: ${newVapiId}`);
+        console.log(`✅ Asistente Vapi creado y vinculado: ${newVapiId}`);
       } catch (vapiErr) {
         console.error(
           "❌ Error creando asistente en Vapi:",
-          vapiErr.response?.data || vapiErr.message,
+          JSON.stringify(vapiErr.response?.data, null, 2),
         );
       }
     }
@@ -113,7 +119,7 @@ exports.makeSmartCall = async (req, res) => {
     const hour = colombiaDate.getHours();
     const fechaHoy = colombiaDate.toISOString().split("T")[0];
 
-    let greeting =
+    let tempGreeting =
       hour >= 12 && hour < 18
         ? "Buenas tardes"
         : hour >= 18 || hour < 5
