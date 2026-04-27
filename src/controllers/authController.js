@@ -49,13 +49,11 @@ exports.login = async (req, res) => {
     }
 
     if (!user.password || user.password === "") {
-      return res
-        .status(200)
-        .json({
-          status: "NEED_REGISTER",
-          email: user.email,
-          tenantId: user.tenantId,
-        });
+      return res.status(200).json({
+        status: "NEED_REGISTER",
+        email: user.email,
+        tenantId: user.tenantId,
+      });
     }
 
     if (!password) {
@@ -67,7 +65,10 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: "Contraseña incorrecta" });
     }
 
-    res.status(200).json({ status: "OK", user });
+    const safeUser = { ...user };
+    delete safeUser.password;
+
+    res.status(200).json({ status: "OK", user: safeUser });
   } catch (e) {
     console.error("Error en Login:", e);
     res.status(500).json({ error: e.message });
