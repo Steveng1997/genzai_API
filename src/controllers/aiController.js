@@ -17,6 +17,7 @@ const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
 exports.getConfig = async (req, res) => {
   const { tenantId } = req.params;
+  console.log("🔍 getConfig - tenantId:", tenantId);
   try {
     const { Items } = await dynamoDB.send(
       new ScanCommand({
@@ -25,14 +26,17 @@ exports.getConfig = async (req, res) => {
         ExpressionAttributeValues: { ":t": tenantId.toString() },
       }),
     );
+    console.log("✅ getConfig - Item encontrado:", Items?.[0] ? "Sí" : "No");
     res.status(200).json(Items?.[0] || {});
   } catch (e) {
+    console.error("❌ getConfig Error:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.askRiley = async (req, res) => {
   const { message, tenantId } = req.body;
+  console.log("📨 askRiley - Request:", { tenantId, message });
 
   if (!message || !tenantId) {
     return res.status(400).json({ error: "Faltan datos" });
@@ -49,6 +53,7 @@ exports.askRiley = async (req, res) => {
 
     const Item = Items?.[0];
     const assistantId = Item?.openaiAssistantId;
+    console.log("🤖 askRiley - AssistantId:", assistantId);
 
     if (!assistantId) {
       return res
@@ -57,7 +62,10 @@ exports.askRiley = async (req, res) => {
     }
 
     let threadId = Item?.activeThreadId;
+    console.log("🧵 askRiley - threadId actual:", threadId);
+
     if (!threadId) {
+      console.log("🆕 Creando nuevo thread...");
       const thread = await openai.beta.threads.create();
       threadId = thread.id;
       await dynamoDB.send(
@@ -71,6 +79,7 @@ exports.askRiley = async (req, res) => {
           ExpressionAttributeValues: { ":t": threadId },
         }),
       );
+      console.log("💾 Thread guardado en DynamoDB:", threadId);
     }
 
     await openai.beta.threads.messages.create(threadId, {
@@ -78,9 +87,12 @@ exports.askRiley = async (req, res) => {
       content: message,
     });
 
+    console.log("⏳ OpenAI - Ejecutando run...");
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
+
+    console.log("🏁 OpenAI - Run status:", run.status);
 
     if (run.status === "completed") {
       const messagesList = await openai.beta.threads.messages.list(threadId);
@@ -89,6 +101,7 @@ exports.askRiley = async (req, res) => {
       );
       if (lastAssistantMessage && lastAssistantMessage.content[0]) {
         const reply = lastAssistantMessage.content[0].text.value;
+        console.log("📤 Riley reply:", reply);
         res.status(200).json({ reply });
       } else {
         res.status(200).json({ reply: "Riley no generó texto." });
@@ -97,16 +110,16 @@ exports.askRiley = async (req, res) => {
       res.status(500).json({ error: `Estado de OpenAI: ${run.status}` });
     }
   } catch (e) {
-    console.error("❌ Detalle del error en DynamoDB:", e);
+    console.error("❌ Detalle del error en askRiley:", e);
     res.status(500).json({
-      error: "Error de base de datos",
+      error: "Error interno",
       detalle: e.message,
-      checkKey: tenantId,
     });
   }
 };
 
 exports.analyzeProductImage = async (req, res) => {
+  console.log("📸 analyzeProductImage - Body:", req.body);
   try {
     const { tenantId, email } = req.body;
     const file = req.file;
@@ -142,6 +155,8 @@ exports.analyzeProductImage = async (req, res) => {
     });
 
     const data = JSON.parse(response.choices[0].message.content);
+    console.log("🧠 OpenAI Vision Result:", data);
+
     const counterField = data.isTechnicalSheet
       ? "totalTechnicalSheets"
       : "totalProductImages";
@@ -160,8 +175,10 @@ exports.analyzeProductImage = async (req, res) => {
         },
       }),
     );
+    console.log("💾 Usuario actualizado en DynamoDB (conteo)");
     res.status(200).json(data);
   } catch (e) {
+    console.error("❌ Error en analyzeProductImage:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -169,6 +186,8 @@ exports.analyzeProductImage = async (req, res) => {
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   let { email, company, tenantId, vapiAssistantId } = req.body;
+  console.log("⚙️ setupAssistant - tenantId:", tenantId);
+
   tenantId = (tenantId || "").trim();
   if (!tenantId) return res.status(400).json({ message: "Falta tenantId" });
 
@@ -183,6 +202,7 @@ exports.setupAssistant = async (req, res) => {
 
     let Item = Items?.[0];
     let currentAgentId = Item?.agentId || uuidv4();
+    console.log("🆔 AgentId:", currentAgentId);
 
     const existingFileNames = Item?.fileNames || [];
     const existingFileIds = Item?.openaiFileIds || [];
@@ -192,8 +212,12 @@ exports.setupAssistant = async (req, res) => {
     let countImagesNoFichas = 0;
 
     for (const file of files) {
-      if (existingFileNames.includes(file.originalname)) continue;
+      if (existingFileNames.includes(file.originalname)) {
+        console.log("⏭️ Saltando archivo duplicado:", file.originalname);
+        continue;
+      }
 
+      console.log("📤 Subiendo archivo a OpenAI:", file.originalname);
       let analysisContent = [];
       if (file.mimetype.startsWith("image/")) {
         const base64Image = file.buffer.toString("base64");
@@ -283,6 +307,7 @@ exports.setupAssistant = async (req, res) => {
     const fullInstructions = `Eres Riley, un asistente de soporte inteligente de la empresa "${company || "la empresa"}". Tu objetivo es ser un soporte integral.`;
 
     if (!openaiId) {
+      console.log("🆕 Creando nuevo asistente OpenAI...");
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company || "Empresa"}`,
         instructions: fullInstructions,
@@ -291,6 +316,7 @@ exports.setupAssistant = async (req, res) => {
       });
       openaiId = assistant.id;
     } else {
+      console.log("🔄 Actualizando asistente OpenAI existente:", openaiId);
       await openai.beta.assistants.update(openaiId, {
         instructions: fullInstructions,
         tools: assistantTools,
@@ -298,6 +324,7 @@ exports.setupAssistant = async (req, res) => {
     }
 
     if (newFileIds.length > 0) {
+      console.log("📂 Creando Vector Store para búsqueda...");
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
         file_ids: finalFileIds,
@@ -307,6 +334,7 @@ exports.setupAssistant = async (req, res) => {
       });
     }
 
+    console.log("💾 Guardando configuración completa en AIConfigs...");
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
@@ -329,8 +357,10 @@ exports.setupAssistant = async (req, res) => {
       }),
     );
 
+    console.log("✅ Setup completado con éxito");
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
+    console.error("❌ Error en setupAssistant:", e);
     res.status(500).json({ error: e.message });
   }
 };
