@@ -95,12 +95,10 @@ exports.askRiley = async (req, res) => {
       const lastAssistantMessage = messagesList.data.find(
         (m) => m.role === "assistant",
       );
-      res
-        .status(200)
-        .json({
-          reply:
-            lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
-        });
+      res.status(200).json({
+        reply:
+          lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
+      });
     } else {
       res.status(500).json({ error: `OpenAI Status: ${run.status}` });
     }
@@ -132,9 +130,12 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
 
     for (const file of files) {
-      const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
       const upload = await openai.files.create({
-        file: fileStream,
+        file: {
+          url: "file.originalname",
+          content: file.buffer,
+          name: file.originalname,
+        },
         purpose: "assistants",
       });
       newFileIds.push(upload.id);
@@ -146,11 +147,14 @@ exports.setupAssistant = async (req, res) => {
 
     if (newFileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
-        name: `VS-${tenantId}`,
-        file_ids: finalFileIds,
+        name: `VS-${tenantId}-${Date.now()}`,
+        file_ids: newFileIds, // Solo los nuevos para este VS
       });
+
       await openai.beta.assistants.update(assistantId, {
-        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
+        tool_resources: {
+          file_search: { vector_store_ids: [vectorStore.id] },
+        },
       });
     }
 
@@ -173,6 +177,7 @@ exports.setupAssistant = async (req, res) => {
 
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
+    console.error("❌ Error en setupAssistant:", e);
     res.status(500).json({ error: e.message });
   }
 };
