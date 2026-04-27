@@ -12,9 +12,15 @@ exports.makeSmartCall = async (req, res) => {
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
 
+  console.log(
+    `🚀 Iniciando makeSmartCall para tenantId: ${tenantId}, empresa: ${company}`,
+  );
+
   try {
-    if (!tenantId)
+    if (!tenantId) {
+      console.error("❌ Error: tenantId no proporcionado");
       return res.status(400).json({ message: "tenantId requerido" });
+    }
 
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
@@ -23,7 +29,10 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    if ((userDoc?.availableMinutes || 0) <= 0) {
+    const availableMinutes = userDoc?.availableMinutes || 0;
+    console.log(`📊 Minutos disponibles para ${email}: ${availableMinutes}`);
+
+    if (availableMinutes <= 0) {
       return res.status(403).json({
         success: false,
         message: "Sin minutos disponibles",
@@ -41,6 +50,7 @@ exports.makeSmartCall = async (req, res) => {
 
     const config = configs?.[0];
     if (!config || !config.assistantId) {
+      console.error(`⚠️ IA no configurada para tenant: ${tenantId}`);
       return res
         .status(404)
         .json({ message: "IA no configurada para este tenant." });
@@ -55,10 +65,13 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!customers || customers.length === 0) {
+      console.log("ℹ️ No hay clientes con call_active = true");
       return res
         .status(404)
         .json({ message: "No hay clientes activos para llamar." });
     }
+
+    console.log(`📞 Clientes a llamar: ${customers.length}`);
 
     const now = new Date();
     const colombiaDate = new Date(
@@ -77,6 +90,8 @@ exports.makeSmartCall = async (req, res) => {
         const formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
+
+        console.log(`📲 Marcando a: ${customer.fullName} (${formattedPhone})`);
 
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
@@ -110,13 +125,11 @@ exports.makeSmartCall = async (req, res) => {
                   },
                   progress: {
                     type: "number",
-                    description:
-                      "Un número del 0 al 100 que represente el avance según la tabla de estados definida.",
+                    description: "Avance 0-100 según el estado definido.",
                   },
                   description: {
                     type: "string",
-                    description:
-                      "Un resumen detallado de la conversación, acuerdos y necesidades del cliente.",
+                    description: "Resumen detallado de la conversación.",
                   },
                   priority: {
                     type: "string",
@@ -124,8 +137,7 @@ exports.makeSmartCall = async (req, res) => {
                   },
                   cita: {
                     type: "string",
-                    description:
-                      "La fecha y hora de la cita acordada (ej: Lunes 10am). Si no hay, poner 'No definida'.",
+                    description: "Fecha/hora acordada o 'No definida'.",
                   },
                 },
                 required: [
@@ -211,8 +223,7 @@ exports.makeSmartCall = async (req, res) => {
                   ],
                   function: {
                     name: "create_task",
-                    description:
-                      "Registra una cita o tarea con fecha y hora en el sistema.",
+                    description: "Registra una cita o tarea con fecha y hora.",
                     parameters: {
                       type: "object",
                       properties: {
@@ -248,12 +259,18 @@ exports.makeSmartCall = async (req, res) => {
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           vapiPayload,
-          {
-            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
-          },
+          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
+        );
+
+        console.log(
+          `✅ Llamada enviada exitosamente para: ${customer.fullName}`,
         );
         return response.data;
       } catch (err) {
+        console.error(
+          `❌ Error llamando a ${customer.fullName}:`,
+          err.response?.data || err.message,
+        );
         return {
           error: true,
           customer: customer.fullName,
@@ -263,8 +280,10 @@ exports.makeSmartCall = async (req, res) => {
     });
 
     const results = await Promise.all(callPromises);
+    console.log("🏁 Proceso de llamadas finalizado.");
     res.status(200).json({ success: true, results });
   } catch (e) {
+    console.error("🔥 Error crítico en makeSmartCall:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
