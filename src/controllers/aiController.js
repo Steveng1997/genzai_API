@@ -29,68 +29,10 @@ exports.getConfig = async (req, res) => {
   }
 };
 
-exports.updatePrompt = async (req, res) => {
-  const { tenantId, systemPrompt, company, email } = req.body;
-  if (!tenantId || systemPrompt === undefined) {
-    return res
-      .status(400)
-      .json({ message: "tenantId y systemPrompt son requeridos." });
-  }
-  try {
-    const endPrompt = Array.isArray(systemPrompt)
-      ? systemPrompt
-      : [systemPrompt.toString().trim()];
-    await dynamoDB.send(
-      new UpdateCommand({
-        TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
-        UpdateExpression:
-          "SET systemPrompt = :p, updatedAt = :u, company = :c, ownerEmail = :e",
-        ExpressionAttributeValues: {
-          ":p": endPrompt,
-          ":u": new Date().toISOString(),
-          ":c": company || "",
-          ":e": (email || "").toLowerCase(),
-        },
-      }),
-    );
-    res
-      .status(200)
-      .json({ success: true, message: "Instrucciones actualizadas." });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-};
-
-exports.editPrompt = async (req, res) => {
-  const { tenantId, systemPrompt } = req.body;
-  if (!tenantId || !Array.isArray(systemPrompt)) {
-    return res
-      .status(400)
-      .json({ message: "tenantId y un array son requeridos." });
-  }
-  try {
-    await dynamoDB.send(
-      new UpdateCommand({
-        TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
-        UpdateExpression: "SET systemPrompt = :p, updatedAt = :u",
-        ExpressionAttributeValues: {
-          ":p": systemPrompt,
-          ":u": new Date().toISOString(),
-        },
-      }),
-    );
-    res.status(200).json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-};
-
 exports.askRiley = async (req, res) => {
   const { message, tenantId } = req.body;
   if (!message || !tenantId) {
-    return res.status(400).json({ error: "Faltan datos (message o tenantId)" });
+    return res.status(400).json({ error: "Faltan datos" });
   }
   try {
     const { Item } = await dynamoDB.send(
@@ -103,22 +45,32 @@ exports.askRiley = async (req, res) => {
     if (!assistantId) {
       return res.status(404).json({ error: "Asistente no configurado." });
     }
-    const thread = await openai.beta.threads.create();
-    await openai.beta.threads.messages.create(thread.id, {
+    let threadId = Item?.activeThreadId;
+    if (!threadId) {
+      const thread = await openai.beta.threads.create();
+      threadId = thread.id;
+      await dynamoDB.send(
+        new UpdateCommand({
+          TableName: TABLE_CONFIGS,
+          Key: { tenantId: tenantId },
+          UpdateExpression: "SET activeThreadId = :t",
+          ExpressionAttributeValues: { ":t": threadId },
+        }),
+      );
+    }
+    await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: message,
     });
-    const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
+    const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
-      additional_instructions:
-        "Responde siempre de forma directa y útil. Tienes permiso total para usar tu conocimiento general para responder cualquier pregunta del usuario.",
     });
     if (run.status === "completed") {
-      const messages = await openai.beta.threads.messages.list(thread.id);
-      const reply = messages.data[0].content[0].text.value;
+      const messagesList = await openai.beta.threads.messages.list(threadId);
+      const reply = messagesList.data[0].content[0].text.value;
       res.status(200).json({ reply });
     } else {
-      res.status(500).json({ error: `Run finalizó con estado: ${run.status}` });
+      res.status(500).json({ error: run.status });
     }
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -129,19 +81,14 @@ exports.analyzeProductImage = async (req, res) => {
   try {
     const { tenantId, email } = req.body;
     const file = req.file;
-    if (!file)
-      return res.status(400).json({ error: "No image or document provided" });
-
+    if (!file) return res.status(400).json({ error: "No file" });
     let messageContent = [];
     if (file.mimetype.startsWith("image/")) {
       const base64Image = file.buffer.toString("base64");
       messageContent = [
         {
           type: "text",
-          text: `Analyze this inventory image.
-          If it is a TECHNICAL SHEET (document with tables, measures, specs), respond: {"isTechnicalSheet": true, "name": "detected name"}.
-          If it is a common PRODUCT, extract data and respond: {"isTechnicalSheet": false, "name": "name", "price": numeric_value, "description": "short", "category": "category"}.
-          Respond only pure JSON, no markdown.`,
+          text: `Analyze this image. If TECHNICAL SHEET: {"isTechnicalSheet": true, "name": "name"}. If common PRODUCT: {"isTechnicalSheet": false, "name": "name", "price": numeric, "description": "short", "category": "category"}. JSON only.`,
         },
         {
           type: "image_url",
@@ -153,33 +100,23 @@ exports.analyzeProductImage = async (req, res) => {
       messageContent = [
         {
           type: "text",
-          text: `Analyze the content of this file (${file.originalname}).
-          If it contains TECHNICAL SHEET data (tables, measures, specs), respond: {"isTechnicalSheet": true, "name": "detected name"}.
-          If it describes a common PRODUCT, extract data and respond: {"isTechnicalSheet": false, "name": "name", "price": numeric_value, "description": "short", "category": "category"}.
-          Respond only pure JSON, no markdown.
-          Content: ${textContent.substring(0, 4000)}`,
+          text: `Analyze this file content (${file.originalname}). If TECHNICAL SHEET: {"isTechnicalSheet": true, "name": "name"}. If common PRODUCT: {"isTechnicalSheet": false, "name": "name", "price": numeric, "description": "short", "category": "category"}. JSON only. Content: ${textContent.substring(0, 4000)}`,
         },
       ];
     }
-
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [{ role: "user", content: messageContent }],
       response_format: { type: "json_object" },
     });
-
     const data = JSON.parse(response.choices[0].message.content);
     const counterField = data.isTechnicalSheet
       ? "totalTechnicalSheets"
       : "totalProductImages";
-
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_USERS,
-        Key: {
-          tenantId: tenantId,
-          email: email.toLowerCase().trim(),
-        },
+        Key: { tenantId: tenantId, email: email.toLowerCase().trim() },
         UpdateExpression: `ADD ${counterField} :inc SET updatedAt = :u`,
         ExpressionAttributeValues: {
           ":inc": 1,
@@ -187,7 +124,6 @@ exports.analyzeProductImage = async (req, res) => {
         },
       }),
     );
-
     res.status(200).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -198,7 +134,7 @@ exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   let { email, company, tenantId, vapiAssistantId } = req.body;
   tenantId = (tenantId || "").trim();
-  if (!tenantId) return res.status(400).json({ message: "Falta el tenantId." });
+  if (!tenantId) return res.status(400).json({ message: "Falta tenantId" });
   try {
     const { Item } = await dynamoDB.send(
       new GetCommand({
@@ -212,19 +148,15 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
     let countFichas = 0;
     let countImagesNoFichas = 0;
-
     for (const file of files) {
       if (existingFileNames.includes(file.originalname)) continue;
-
-      let isFicha = false;
       let analysisContent = [];
-
       if (file.mimetype.startsWith("image/")) {
         const base64Image = file.buffer.toString("base64");
         analysisContent = [
           {
             type: "text",
-            text: 'Analyze if this image is a TECHNICAL SHEET (tables, measures, specs) or just a common PRODUCT photo. Respond: {"isTechnicalSheet": true/false}',
+            text: 'Analyze if this image is a TECHNICAL SHEET. Respond: {"isTechnicalSheet": true/false}',
           },
           {
             type: "image_url",
@@ -232,29 +164,22 @@ exports.setupAssistant = async (req, res) => {
           },
         ];
       } else {
+        const textContent = file.buffer.toString("utf-8");
         analysisContent = [
           {
             type: "text",
-            text: `Analyze the content of this file named "${file.originalname}". Determine if it is a TECHNICAL SHEET (product specifications, technical data, tables) or just a simple image/document that IS NOT a technical sheet. Respond: {"isTechnicalSheet": true/false}`,
+            text: `Analyze the content of "${file.originalname}". Determine if it is a TECHNICAL SHEET. Respond: {"isTechnicalSheet": true/false}. Content: ${textContent.substring(0, 2000)}`,
           },
         ];
       }
-
       const analysis = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [{ role: "user", content: analysisContent }],
         response_format: { type: "json_object" },
       });
-
       const result = JSON.parse(analysis.choices[0].message.content);
-      isFicha = result.isTechnicalSheet;
-
-      if (isFicha) {
-        countFichas++;
-      } else {
-        countImagesNoFichas++;
-      }
-
+      if (result.isTechnicalSheet) countFichas++;
+      else countImagesNoFichas++;
       const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
       const uploadResponse = await openai.files.create({
         file: fileStream,
@@ -263,15 +188,11 @@ exports.setupAssistant = async (req, res) => {
       newFileIds.push(uploadResponse.id);
       newFileNames.push(file.originalname);
     }
-
     if (newFileIds.length > 0) {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: TABLE_USERS,
-          Key: {
-            tenantId: tenantId,
-            email: email.toLowerCase().trim(),
-          },
+          Key: { tenantId: tenantId, email: email.toLowerCase().trim() },
           UpdateExpression:
             "ADD totalTechnicalSheets :docs, totalProductImages :imgs SET updatedAt = :u",
           ExpressionAttributeValues: {
@@ -282,7 +203,6 @@ exports.setupAssistant = async (req, res) => {
         }),
       );
     }
-
     const finalFileIds = [...existingFileIds, ...newFileIds];
     const finalFileNames = [...existingFileNames, ...newFileNames];
     let openaiId = Item?.openaiAssistantId;
@@ -306,14 +226,7 @@ exports.setupAssistant = async (req, res) => {
         },
       },
     ];
-    const instructionsText = Array.isArray(Item?.systemPrompt)
-      ? Item.systemPrompt.join(". ")
-      : Item?.systemPrompt || "";
-    const fullInstructions = `
-      Eres Riley, un asistente de soporte inteligente y versátil de la empresa "${company || "la empresa"}".
-      Tu objetivo es ser un soporte integral.
-      Instrucciones adicionales: ${instructionsText}
-    `.trim();
+    const fullInstructions = `Eres Riley, un asistente de soporte inteligente de la empresa "${company || "la empresa"}". Tu objetivo es ser un soporte integral.`;
     if (!openaiId) {
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company || "Empresa"}`,
@@ -328,7 +241,7 @@ exports.setupAssistant = async (req, res) => {
         tools: assistantTools,
       });
     }
-    if (finalFileIds.length > 0) {
+    if (newFileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
         file_ids: finalFileIds,
