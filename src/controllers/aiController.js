@@ -7,11 +7,14 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
+/**
+ * Actualiza el contador en DynamoDB basándose en el tipo de documento detectado.
+ */
 const updateCounter = async (tenantId, email, isTechnicalSheet) => {
-  // Se define el campo basándose estrictamente en el resultado de la IA
-  const field = isTechnicalSheet
-    ? "totalTechnicalSheets"
-    : "totalProductImages";
+  // Aseguramos que sea un booleano real
+  const isSheet = isTechnicalSheet === true || isTechnicalSheet === "true";
+  const field = isSheet ? "totalTechnicalSheets" : "totalProductImages";
+
   try {
     await dynamoDB.send(
       new UpdateCommand({
@@ -27,22 +30,26 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
         },
       }),
     );
+    console.log(`✅ Contador actualizado para ${email}: ${field}`);
   } catch (error) {
-    console.error("Error DynamoDB:", error.message);
+    console.error("❌ Error DynamoDB Counter:", error.message);
   }
 };
 
+/**
+ * Crea un asistente con instrucciones estrictas de clasificación.
+ */
 const createOpenAIAssistant = async (company) => {
   try {
-    const assistant = await openai.beta.assistants.create({
+    return await openai.beta.assistants.create({
       name: `Riley - ${company || "Empresa"}`,
-      instructions: `Eres Riley, experto en ingeniería. Clasificas documentos industriales.
-      REGLA DE ORO: Si el documento tiene tablas, medidas (mm, cm, pulgadas), torque, especificaciones de motor, seguridad (ABS, Airbags) o normativas, es una FICHA TÉCNICA (isTechnicalSheet: true).
-      Si es solo una foto sin datos técnicos, es IMAGEN DE PRODUCTO (isTechnicalSheet: false).`,
+      instructions: `Eres Riley, experto analista industrial. Tu tarea es clasificar documentos.
+      - FICHA TÉCNICA (isTechnicalSheet: true): Documentos con tablas, medidas (mm, cm), torque, seguridad (ABS, Airbags, ISOFIX), motorización o planos.
+      - IMAGEN DE PRODUCTO (isTechnicalSheet: false): Fotos comerciales, catálogos sin datos técnicos numéricos o fotos reales.
+      RESPONDE SIEMPRE EN FORMATO JSON ESTRICTO: {"isTechnicalSheet": boolean}`,
       model: "gpt-4o",
       tools: [{ type: "file_search" }],
     });
-    return assistant.id;
   } catch (error) {
     throw error;
   }
@@ -68,6 +75,7 @@ exports.askRiley = async (req, res) => {
   const { message, tenantId, company } = req.body;
   if (!message || !tenantId)
     return res.status(400).json({ error: "Faltan datos" });
+
   try {
     const { Items } = await dynamoDB.send(
       new ScanCommand({
@@ -79,7 +87,7 @@ exports.askRiley = async (req, res) => {
     let Item = Items?.[0];
     let assistantId =
       Item?.openaiAssistantId ||
-      (await createOpenAIAssistant(company || Item?.company));
+      (await createOpenAIAssistant(company || Item?.company).then((a) => a.id));
     let agentId = Item?.agentId || uuidv4();
     let threadId = Item?.activeThreadId;
 
@@ -95,6 +103,7 @@ exports.askRiley = async (req, res) => {
         }),
       );
     }
+
     await openai.beta.threads.messages.create(threadId, {
       role: "user",
       content: message,
@@ -102,15 +111,18 @@ exports.askRiley = async (req, res) => {
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
+
     if (run.status === "completed") {
       const messagesList = await openai.beta.threads.messages.list(threadId);
       const lastAssistantMessage = messagesList.data.find(
         (m) => m.role === "assistant",
       );
-      res.status(200).json({
-        reply:
-          lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
-      });
+      res
+        .status(200)
+        .json({
+          reply:
+            lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
+        });
     } else {
       res.status(500).json({ error: `Status: ${run.status}` });
     }
@@ -123,6 +135,7 @@ exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
   const { email, company, tenantId } = req.body;
   if (!tenantId) return res.status(400).json({ message: "tenantId requerido" });
+
   try {
     const { Items } = await dynamoDB.send(
       new ScanCommand({
@@ -133,7 +146,8 @@ exports.setupAssistant = async (req, res) => {
     );
     let Item = Items?.[0];
     let assistantId =
-      Item?.openaiAssistantId || (await createOpenAIAssistant(company));
+      Item?.openaiAssistantId ||
+      (await createOpenAIAssistant(company).then((a) => a.id));
     let agentId = Item?.agentId || uuidv4();
     const newFileIds = [];
     const newFileNames = [];
@@ -147,7 +161,33 @@ exports.setupAssistant = async (req, res) => {
       newFileNames.push(file.originalname);
 
       let isSheet = false;
-      if (file.mimetype.startsWith("image/")) {
+
+      // PROCESAMIENTO SEGÚN TIPO DE ARCHIVO
+      if (file.mimetype === "application/pdf") {
+        const run = await openai.beta.threads.createAndRunAndPoll({
+          assistant_id: assistantId,
+          thread: {
+            messages: [
+              {
+                role: "user",
+                content:
+                  'Analiza exhaustivamente este PDF. Busca tablas de medidas, especificaciones de seguridad como ABS, Airbags o ISOFIX. Si tiene datos técnicos de ingeniería, es una FICHA TÉCNICA. Responde JSON: {"isTechnicalSheet": true}',
+                attachments: [
+                  { file_id: fileContext.id, tools: [{ type: "file_search" }] },
+                ],
+              },
+            ],
+          },
+        });
+
+        if (run.status === "completed") {
+          const msgs = await openai.beta.threads.messages.list(run.thread_id);
+          const raw = msgs.data[0].content[0].text.value;
+          // Limpieza de JSON (quitar ```json ... ```)
+          const match = raw.match(/\{.*\}/s);
+          if (match) isSheet = JSON.parse(match[0]).isTechnicalSheet;
+        }
+      } else if (file.mimetype.startsWith("image/")) {
         const vision = await openai.chat.completions.create({
           model: "gpt-4o",
           messages: [
@@ -172,29 +212,8 @@ exports.setupAssistant = async (req, res) => {
         isSheet = JSON.parse(
           vision.choices[0].message.content,
         ).isTechnicalSheet;
-      } else if (file.mimetype === "application/pdf") {
-        const run = await openai.beta.threads.createAndRunAndPoll({
-          assistant_id: assistantId,
-          thread: {
-            messages: [
-              {
-                role: "user",
-                content:
-                  "Analiza el contenido del PDF. Busca palabras clave como 'Ficha Técnica', 'mm', 'Especificaciones', 'Seguridad', 'ABS', o tablas de datos. Si detectas información técnica, isTechnicalSheet debe ser true. Responde JSON: {\"isTechnicalSheet\": boolean}",
-                attachments: [
-                  { file_id: fileContext.id, tools: [{ type: "file_search" }] },
-                ],
-              },
-            ],
-          },
-        });
-        if (run.status === "completed") {
-          const msgs = await openai.beta.threads.messages.list(run.thread_id);
-          const raw = msgs.data[0].content[0].text.value;
-          const match = raw.match(/\{.*\}/s);
-          if (match) isSheet = JSON.parse(match[0]).isTechnicalSheet;
-        }
       }
+
       if (email) await updateCounter(tenantId, email, isSheet);
     }
 
@@ -238,6 +257,7 @@ exports.analyzeProductImage = async (req, res) => {
     const { tenantId, email } = req.body;
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file" });
+
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
 
     if (file.mimetype.startsWith("image/")) {
@@ -249,7 +269,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'Si ves tablas, medidas técnicas o datos industriales, isTechnicalSheet es true. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Si ves tablas, medidas técnicas o datos industriales (ABS, mm, especificaciones), isTechnicalSheet es true. Responde JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               },
               {
                 type: "image_url",
@@ -268,15 +288,15 @@ exports.analyzeProductImage = async (req, res) => {
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
-      const tempId = await createOpenAIAssistant("Validator");
+      const tempAssistant = await createOpenAIAssistant("Validator");
       const r = await openai.beta.threads.createAndRunAndPoll({
-        assistant_id: tempId,
+        assistant_id: tempAssistant.id,
         thread: {
           messages: [
             {
               role: "user",
               content:
-                'Busca exhaustivamente tablas de medidas, seguridad y especificaciones de motor. Es una Ficha Técnica? JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                'Busca exhaustivamente tablas de medidas, seguridad (ABS) y especificaciones técnicas. ¿Es una Ficha Técnica? Responde JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               attachments: [
                 { file_id: f.id, tools: [{ type: "file_search" }] },
               ],
@@ -290,7 +310,7 @@ exports.analyzeProductImage = async (req, res) => {
         if (match) result = JSON.parse(match[0]);
       }
       await openai.files.del(f.id);
-      await openai.beta.assistants.del(tempId);
+      await openai.beta.assistants.del(tempAssistant.id);
     }
 
     if (email) await updateCounter(tenantId, email, result.isTechnicalSheet);
