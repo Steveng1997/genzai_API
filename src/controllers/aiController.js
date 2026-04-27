@@ -80,6 +80,7 @@ exports.askRiley = async (req, res) => {
       res.status(500).json({ error: run.status });
     }
   } catch (e) {
+    console.error("❌ Error en askRiley:", e);
     res.status(500).json({ error: e.message });
   }
 };
