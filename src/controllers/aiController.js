@@ -67,8 +67,15 @@ exports.askRiley = async (req, res) => {
     });
     if (run.status === "completed") {
       const messagesList = await openai.beta.threads.messages.list(threadId);
-      const reply = messagesList.data[0].content[0].text.value;
-      res.status(200).json({ reply });
+      const lastAssistantMessage = messagesList.data.find(
+        (m) => m.role === "assistant",
+      );
+      if (lastAssistantMessage && lastAssistantMessage.content[0]) {
+        const reply = lastAssistantMessage.content[0].text.value;
+        res.status(200).json({ reply });
+      } else {
+        res.status(200).json({ reply: "No se generó respuesta." });
+      }
     } else {
       res.status(500).json({ error: run.status });
     }
