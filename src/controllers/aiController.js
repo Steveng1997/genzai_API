@@ -1,5 +1,6 @@
 const OpenAI = require("openai");
 const axios = require("axios");
+const { v4: uuidv4 } = require("uuid");
 const {
   UpdateCommand,
   GetCommand,
@@ -17,13 +18,14 @@ const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 exports.getConfig = async (req, res) => {
   const { tenantId } = req.params;
   try {
-    const { Item } = await dynamoDB.send(
-      new GetCommand({
+    const { Items } = await dynamoDB.send(
+      new ScanCommand({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": tenantId.toString() },
       }),
     );
-    res.status(200).json(Item || {});
+    res.status(200).json(Items?.[0] || {});
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -37,14 +39,17 @@ exports.askRiley = async (req, res) => {
   }
 
   try {
-    const { Item } = await dynamoDB.send(
-      new GetCommand({
+    const { Items } = await dynamoDB.send(
+      new ScanCommand({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId.toString() },
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": tenantId.toString() },
       }),
     );
 
+    const Item = Items?.[0];
     const assistantId = Item?.openaiAssistantId;
+
     if (!assistantId) {
       return res
         .status(404)
@@ -58,7 +63,10 @@ exports.askRiley = async (req, res) => {
       await dynamoDB.send(
         new UpdateCommand({
           TableName: TABLE_CONFIGS,
-          Key: { tenantId: tenantId.toString() },
+          Key: {
+            tenantId: Item.tenantId,
+            agentId: Item.agentId,
+          },
           UpdateExpression: "SET activeThreadId = :t",
           ExpressionAttributeValues: { ":t": threadId },
         }),
@@ -103,6 +111,7 @@ exports.analyzeProductImage = async (req, res) => {
     const { tenantId, email } = req.body;
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file" });
+
     let messageContent = [];
     if (file.mimetype.startsWith("image/")) {
       const base64Image = file.buffer.toString("base64");
@@ -125,15 +134,18 @@ exports.analyzeProductImage = async (req, res) => {
         },
       ];
     }
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [{ role: "user", content: messageContent }],
       response_format: { type: "json_object" },
     });
+
     const data = JSON.parse(response.choices[0].message.content);
     const counterField = data.isTechnicalSheet
       ? "totalTechnicalSheets"
       : "totalProductImages";
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_USERS,
@@ -159,21 +171,29 @@ exports.setupAssistant = async (req, res) => {
   let { email, company, tenantId, vapiAssistantId } = req.body;
   tenantId = (tenantId || "").trim();
   if (!tenantId) return res.status(400).json({ message: "Falta tenantId" });
+
   try {
-    const { Item } = await dynamoDB.send(
-      new GetCommand({
+    const { Items } = await dynamoDB.send(
+      new ScanCommand({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId },
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": tenantId },
       }),
     );
+
+    let Item = Items?.[0];
+    let currentAgentId = Item?.agentId || uuidv4();
+
     const existingFileNames = Item?.fileNames || [];
     const existingFileIds = Item?.openaiFileIds || [];
     const newFileIds = [];
     const newFileNames = [];
     let countFichas = 0;
     let countImagesNoFichas = 0;
+
     for (const file of files) {
       if (existingFileNames.includes(file.originalname)) continue;
+
       let analysisContent = [];
       if (file.mimetype.startsWith("image/")) {
         const base64Image = file.buffer.toString("base64");
@@ -196,14 +216,17 @@ exports.setupAssistant = async (req, res) => {
           },
         ];
       }
+
       const analysis = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [{ role: "user", content: analysisContent }],
         response_format: { type: "json_object" },
       });
+
       const result = JSON.parse(analysis.choices[0].message.content);
       if (result.isTechnicalSheet) countFichas++;
       else countImagesNoFichas++;
+
       const fileStream = await OpenAI.toFile(file.buffer, file.originalname);
       const uploadResponse = await openai.files.create({
         file: fileStream,
@@ -212,6 +235,7 @@ exports.setupAssistant = async (req, res) => {
       newFileIds.push(uploadResponse.id);
       newFileNames.push(file.originalname);
     }
+
     if (newFileIds.length > 0) {
       await dynamoDB.send(
         new UpdateCommand({
@@ -230,9 +254,11 @@ exports.setupAssistant = async (req, res) => {
         }),
       );
     }
+
     const finalFileIds = [...existingFileIds, ...newFileIds];
     const finalFileNames = [...existingFileNames, ...newFileNames];
     let openaiId = Item?.openaiAssistantId;
+
     const assistantTools = [
       { type: "file_search" },
       {
@@ -253,7 +279,9 @@ exports.setupAssistant = async (req, res) => {
         },
       },
     ];
+
     const fullInstructions = `Eres Riley, un asistente de soporte inteligente de la empresa "${company || "la empresa"}". Tu objetivo es ser un soporte integral.`;
+
     if (!openaiId) {
       const assistant = await openai.beta.assistants.create({
         name: `Riley - ${company || "Empresa"}`,
@@ -268,6 +296,7 @@ exports.setupAssistant = async (req, res) => {
         tools: assistantTools,
       });
     }
+
     if (newFileIds.length > 0) {
       const vectorStore = await openai.beta.vectorStores.create({
         name: `Store-${tenantId}`,
@@ -277,10 +306,14 @@ exports.setupAssistant = async (req, res) => {
         tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
       });
     }
+
     await dynamoDB.send(
       new UpdateCommand({
         TableName: TABLE_CONFIGS,
-        Key: { tenantId: tenantId.toString() },
+        Key: {
+          tenantId: tenantId.toString(),
+          agentId: currentAgentId,
+        },
         UpdateExpression:
           "SET openaiAssistantId = :oa, assistantId = :va, vapiPhoneNumberId = :vpi, openaiFileIds = :f, fileNames = :fn, updatedAt = :u, company = :c, ownerEmail = :e",
         ExpressionAttributeValues: {
@@ -295,6 +328,7 @@ exports.setupAssistant = async (req, res) => {
         },
       }),
     );
+
     res.status(200).json({ success: true, openaiId });
   } catch (e) {
     res.status(500).json({ error: e.message });
