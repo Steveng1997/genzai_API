@@ -7,6 +7,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
+/**
+ * Actualiza los contadores de uso en DynamoDB
+ */
 const updateCounter = async (tenantId, email, isTechnicalSheet) => {
   const isSheet =
     isTechnicalSheet === true ||
@@ -28,24 +31,27 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
         },
       }),
     );
-    console.log(
-      `✅ CONTADOR: ${field} incrementado para ${email} (Ficha: ${isSheet})`,
-    );
+    console.log(`✅ CONTADOR: ${field} incrementado para ${email}`);
   } catch (error) {
     console.error("❌ Error DynamoDB Counter:", error.message);
   }
 };
 
+/**
+ * Crea un asistente clasificador por defecto
+ */
 const createOpenAIAssistant = async (company) => {
   return await openai.beta.assistants.create({
     name: `Riley - Clasificador - ${company || "Empresa"}`,
     instructions: `Eres Riley. Tu única misión es detectar si un documento es una FICHA TÉCNICA (isTechnicalSheet: true) o una IMAGEN/PUBLICIDAD (isTechnicalSheet: false). 
-        Busca: medidas (mm), torque, potencia, airbags, frenos. 
-        Responde SOLO JSON: {"isTechnicalSheet": boolean}`,
+        Busca: medidas (mm), torque, potencia, airbags, frenos.
+        Responde SOLO JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}`,
     model: "gpt-4o",
     tools: [{ type: "file_search" }],
   });
 };
+
+// --- MÉTODOS DE CONFIGURACIÓN Y CHAT ---
 
 exports.getConfig = async (req, res) => {
   const { tenantId } = req.params;
@@ -100,8 +106,6 @@ exports.askRiley = async (req, res) => {
       role: "user",
       content: message,
     });
-
-    // Cambiamos createAndPoll por una ejecución manual si la librería falla
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
@@ -122,6 +126,8 @@ exports.askRiley = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+// --- MÉTODOS DE PROCESAMIENTO DE ARCHIVOS ---
 
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
@@ -148,8 +154,6 @@ exports.setupAssistant = async (req, res) => {
     for (const file of files) {
       console.log(`\n--- INICIO PROCESAMIENTO: ${file.originalname} ---`);
       console.log(`DEBUG: file.mimetype original = "${file.mimetype}"`);
-
-      // 1. CORRECCIÓN DE MIMETYPE PARA OPENAI
       let mimeTypeForOpenAI = file.mimetype;
       if (
         file.originalname.toLowerCase().endsWith(".pdf") &&
@@ -169,7 +173,7 @@ exports.setupAssistant = async (req, res) => {
       });
 
       const tempVectorStore = await openai.beta.vectorStores.create({
-        name: `Temp-Verify-${fileContext.id}`,
+        name: `Temp-${fileContext.id}`,
         file_ids: [fileContext.id],
       });
 
@@ -319,19 +323,25 @@ exports.analyzeProductImage = async (req, res) => {
   try {
     const { tenantId, email } = req.body;
     const file = req.file;
+
     if (!file) return res.status(400).json({ error: "No file" });
 
+    // 1. CORRECCIÓN DE MIMETYPE (Octet-stream a PDF)
     let mimeTypeForOpenAI = file.mimetype;
     if (
       file.originalname.toLowerCase().endsWith(".pdf") &&
       file.mimetype === "application/octet-stream"
     ) {
       mimeTypeForOpenAI = "application/pdf";
+      console.log(
+        "🛠️ Corrigiendo mimetype de octet-stream a application/pdf en analyzeProductImage",
+      );
     }
 
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
     const nameToTest = file.originalname.toLowerCase();
 
+    // Detección previa por nombre
     if (
       ["ficha", "tecnica", "spec", "manual"].some((k) => nameToTest.includes(k))
     ) {
@@ -344,7 +354,9 @@ exports.analyzeProductImage = async (req, res) => {
       file.mimetype.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
 
+    // --- CASO IMAGEN (GPT-4o Vision) ---
     if (isImage) {
+      console.log("📷 Analizando imagen con GPT-4o Vision...");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -353,7 +365,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Analiza esta imagen de producto. Extrae la información en este formato JSON estricto: {"isTechnicalSheet": boolean, "name": "string", "price": number}. Si no hay precio, pon 0.',
               },
               {
                 type: "image_url",
@@ -366,8 +378,12 @@ exports.analyzeProductImage = async (req, res) => {
         ],
         response_format: { type: "json_object" },
       });
-      result = { ...result, ...JSON.parse(resp.choices[0].message.content) };
+      const aiData = JSON.parse(resp.choices[0].message.content);
+      result = { ...result, ...aiData };
+
+      // --- CASO PDF (OpenAI Assistants + File Search) ---
     } else if (isPDF) {
+      console.log("📄 Analizando PDF con File Search...");
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
           type: mimeTypeForOpenAI,
@@ -376,12 +392,16 @@ exports.analyzeProductImage = async (req, res) => {
       });
 
       const vs = await openai.beta.vectorStores.create({
-        name: `Val-${f.id}`,
+        name: `Validator-${uuidv4()}`,
         file_ids: [f.id],
       });
-      const tempId = await createOpenAIAssistant("Validator").then((a) => a.id);
 
-      await openai.beta.assistants.update(tempId, {
+      const tempAssistant = await openai.beta.assistants.create({
+        name: "Data Extractor",
+        instructions:
+          "Eres un extractor de datos. Busca el nombre del producto y su precio. Responde solo JSON.",
+        model: "gpt-4o",
+        tools: [{ type: "file_search" }],
         tool_resources: { file_search: { vector_store_ids: [vs.id] } },
       });
 
@@ -390,29 +410,37 @@ exports.analyzeProductImage = async (req, res) => {
           {
             role: "user",
             content:
-              'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+              'Extrae del documento: {"isTechnicalSheet": boolean, "name": "string", "price": number}. Responde solo el objeto JSON.',
           },
         ],
       });
 
-      const r = await openai.beta.threads.runs.createAndPoll(thread.id, {
-        assistant_id: tempId,
+      const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
+        assistant_id: tempAssistant.id,
       });
 
-      if (r.status === "completed") {
-        const m = await openai.beta.threads.messages.list(r.thread_id);
-        const match = m.data[0].content[0].text.value.match(/\{.*\}/s);
-        if (match) result = { ...result, ...JSON.parse(match[0]) };
+      if (run.status === "completed") {
+        const m = await openai.beta.threads.messages.list(run.thread_id);
+        const content = m.data[0].content[0].text.value;
+        const match = content.match(/\{[\s\S]*\}/);
+        if (match) {
+          result = { ...result, ...JSON.parse(match[0]) };
+        }
       }
 
+      // Limpieza de recursos temporales
       await openai.files.del(f.id);
       await openai.beta.vectorStores.del(vs.id);
-      await openai.beta.assistants.del(tempId);
+      await openai.beta.assistants.del(tempAssistant.id);
     }
 
+    // Actualización de contadores
     if (email) await updateCounter(tenantId, email, result.isTechnicalSheet);
+
+    console.log("📊 RESULTADO FINAL:", result);
     res.status(200).json(result);
   } catch (e) {
+    console.error("❌ Error en analyzeProductImage:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
