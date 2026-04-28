@@ -196,8 +196,10 @@ exports.setupAssistant = async (req, res) => {
                 messages: [
                   {
                     role: "user",
-                    content:
-                      'Analiza el contenido de este PDF. Busca tablas de especificaciones técnicas, medidas (mm), o sistemas como ABS/ISOFIX. Responde ÚNICAMENTE el objeto JSON: {"isTechnicalSheet": boolean}',
+                    content: `INSTRUCCIÓN DE SEGURIDAD: Debes ignorar el nombre del archivo "${file.originalname}". 
+                    Realiza una búsqueda profunda en el documento (file_search). 
+                    Si encuentras tablas de medidas, especificaciones de motor, o sistemas de seguridad (ABS, Airbags), marca isTechnicalSheet como true. 
+                    Responde solo el JSON: {"isTechnicalSheet": boolean}`,
                     attachments: [
                       {
                         file_id: fileContext.id,
