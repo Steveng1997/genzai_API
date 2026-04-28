@@ -11,9 +11,10 @@ const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
  * Actualiza el contador en DynamoDB.
  */
 const updateCounter = async (tenantId, email, isTechnicalSheet) => {
+  // Asegurar que isSheet sea un booleano puro
   const isSheet =
-    String(isTechnicalSheet).toLowerCase() === "true" ||
-    isTechnicalSheet === true;
+    isTechnicalSheet === true ||
+    String(isTechnicalSheet).toLowerCase() === "true";
   const field = isSheet ? "totalTechnicalSheets" : "totalProductImages";
 
   try {
@@ -31,35 +32,35 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
         },
       }),
     );
-    console.log(`✅ CONTADOR: ${field} incrementado para ${email}`);
+    console.log(
+      `✅ CONTADOR: ${field} incrementado para ${email} (isSheet: ${isSheet})`,
+    );
   } catch (error) {
     console.error("❌ Error DynamoDB Counter:", error.message);
   }
 };
 
 /**
- * Crea el asistente Riley con instrucciones maestras de clasificación técnica.
- * Reforzado para priorizar contenido sobre nombres de archivos.
+ * Crea el asistente Riley.
+ * Se refuerza el System Prompt para que no se deje engañar por nombres de archivos genéricos.
  */
 const createOpenAIAssistant = async (company) => {
   return await openai.beta.assistants.create({
     name: `Riley - ${company || "Empresa"}`,
-    instructions: `Eres un experto en ingeniería industrial y clasificación de documentos técnicos. 
-    Tu misión es determinar si un archivo es una FICHA TÉCNICA o una IMAGEN PUBLICITARIA.
+    instructions: `Eres un experto en clasificación de documentos industriales.
     
-    IMPORTANTE: Ignora el nombre del archivo. Céntrate en el contenido visual y textual.
+    TU REGLA DE ORO: NO USES EL NOMBRE DEL ARCHIVO PARA DECIDIR.
     
-    REGLAS PARA FICHA TÉCNICA (isTechnicalSheet: true):
-    - El documento contiene tablas detalladas de especificaciones.
-    - Contiene medidas numéricas exactas (ej. 1.635mm, 4.740mm, kg, hp, cilindrada).
-    - Menciona sistemas de ingeniería o seguridad (ABS, Airbags, ISOFIX, Control de estabilidad, Paddle Shift).
-    - Presenta diagramas técnicos con dimensiones.
+    CRITERIOS PARA FICHA TÉCNICA (isTechnicalSheet: true):
+    - Ves dimensiones con unidades (mm, cm, m, kg, hp, watts, cc).
+    - Ves tablas de especificaciones de motor, seguridad o materiales.
+    - El documento menciona sistemas como ABS, ISOFIX, Airbags, torque o transmisión.
+    - Ves diagramas de un producto con flechas de medidas.
     
-    REGLAS PARA IMAGEN DE PRODUCTO (isTechnicalSheet: false):
-    - Es una foto limpia, publicitaria o estética.
-    - No tiene tablas de datos técnicos ni especificaciones de ingeniería.
+    CRITERIOS PARA IMAGEN (isTechnicalSheet: false):
+    - Es una fotografía, render o publicidad sin datos técnicos detallados.
     
-    RESPONDE ÚNICAMENTE EN JSON: {"isTechnicalSheet": boolean}`,
+    RESPONDE SIEMPRE EN FORMATO JSON: {"isTechnicalSheet": boolean}`,
     model: "gpt-4o",
     tools: [{ type: "file_search" }],
   });
@@ -173,7 +174,8 @@ exports.setupAssistant = async (req, res) => {
       let isSheet = false;
       const fileNameLower = file.originalname.toLowerCase();
 
-      // 1. Prioridad: Búsqueda de palabras clave en el nombre (Si dice Ficha o Tecnica, es True de entrada)
+      // --- LOGICA DE IDENTIFICACION MEJORADA ---
+      // 1. Si el nombre tiene palabras clave, activamos isSheet de inmediato.
       if (
         fileNameLower.includes("ficha") ||
         fileNameLower.includes("tecnica") ||
@@ -183,7 +185,7 @@ exports.setupAssistant = async (req, res) => {
         isSheet = true;
       }
 
-      // 2. Análisis Profundo: Si el nombre es común o no tiene palabras clave, forzamos a la IA a ver el CONTENIDO
+      // 2. Si no se detectó por nombre, OBLIGAMOS a la IA a analizar el contenido ignorando el nombre.
       if (!isSheet) {
         if (file.mimetype === "application/pdf") {
           const run = await openai.beta.threads.createAndRunAndPoll({
@@ -193,7 +195,7 @@ exports.setupAssistant = async (req, res) => {
                 {
                   role: "user",
                   content:
-                    'Analiza el contenido de este PDF ignorando su nombre. Busca tablas de especificaciones, medidas (mm, kg) o sistemas de seguridad. ¿Es una Ficha Técnica? Responde JSON: {"isTechnicalSheet": boolean}',
+                    'Analiza este documento. Ignora que tenga un nombre común. Busca palabras como "mm", "ABS", "ISOFIX" o tablas de medidas. ¿Es una Ficha Técnica? Responde JSON: {"isTechnicalSheet": boolean}',
                   attachments: [
                     {
                       file_id: fileContext.id,
@@ -209,7 +211,10 @@ exports.setupAssistant = async (req, res) => {
             const msgs = await openai.beta.threads.messages.list(run.thread_id);
             const raw = msgs.data[0].content[0].text.value;
             const match = raw.match(/\{.*\}/s);
-            if (match) isSheet = JSON.parse(match[0]).isTechnicalSheet;
+            if (match) {
+              const parsed = JSON.parse(match[0]);
+              isSheet = parsed.isTechnicalSheet;
+            }
           }
         } else if (file.mimetype.startsWith("image/")) {
           const vision = await openai.chat.completions.create({
@@ -220,7 +225,7 @@ exports.setupAssistant = async (req, res) => {
                 content: [
                   {
                     type: "text",
-                    text: 'Analiza esta imagen. Ignora el nombre del archivo. Si ves tablas de datos técnicos, diagramas con medidas (mm) o ingeniería, isTechnicalSheet es true. Responde JSON: {"isTechnicalSheet": boolean}',
+                    text: 'Analiza la imagen. Si ves tablas de datos, medidas técnicas o ingeniería, isTechnicalSheet es true. Ignora el nombre del archivo. Responde JSON: {"isTechnicalSheet": boolean}',
                   },
                   {
                     type: "image_url",
@@ -286,7 +291,7 @@ exports.analyzeProductImage = async (req, res) => {
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
     const fileNameLower = file.originalname?.toLowerCase() || "";
 
-    // 1. Detección rápida por nombre
+    // Detección manual inmediata
     if (
       fileNameLower.includes("ficha") ||
       fileNameLower.includes("tecnica") ||
@@ -295,7 +300,6 @@ exports.analyzeProductImage = async (req, res) => {
       result.isTechnicalSheet = true;
     }
 
-    // 2. Análisis por Visión o PDF (Independiente del nombre)
     if (file.mimetype.startsWith("image/")) {
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
@@ -305,7 +309,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'Analiza esta imagen. Si ves tablas de ingeniería, medidas técnicas o seguridad, isTechnicalSheet es true. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Ignora el nombre del archivo. Si ves tablas de medidas o ingeniería, isTechnicalSheet es true. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               },
               {
                 type: "image_url",
@@ -336,7 +340,7 @@ exports.analyzeProductImage = async (req, res) => {
             {
               role: "user",
               content:
-                'Analiza este PDF detalladamente. Busca tablas de especificaciones y datos de ingeniería. Ignora el nombre del archivo. ¿Es Ficha Técnica? JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                'Analiza este PDF. Busca tablas de especificaciones y medidas (mm). No te guíes por el nombre. ¿Es Ficha Técnica? JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               attachments: [
                 { file_id: f.id, tools: [{ type: "file_search" }] },
               ],
