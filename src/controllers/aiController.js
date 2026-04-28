@@ -144,12 +144,13 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
 
     for (const file of files) {
+      console.log(`\n--- PROCESANDO: ${file.originalname} ---`);
       const fileContext = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
 
-      // 1. Crear Vector Store temporal para validación
+      // 1. Crear Vector Store temporal para validación inmediata
       const tempVectorStore = await openai.beta.vectorStores.create({
         name: `Temp-Verify-${fileContext.id}`,
         file_ids: [fileContext.id],
@@ -166,33 +167,31 @@ exports.setupAssistant = async (req, res) => {
 
       let isSheet = false;
       const nameToTest = file.originalname.toLowerCase();
-      const sheetKeywords = ["ficha", "tecnica", "spec", "manual"];
+      const sheetKeywords = ["ficha", "tecnica", "spec", "manual", "datos"];
 
+      // Validación por nombre
       if (sheetKeywords.some((k) => nameToTest.includes(k))) {
+        console.log(`📌 Match por nombre detectado.`);
         isSheet = true;
       }
 
+      console.log(`Valor de isSheet tras análisis de nombre: ${isSheet}`);
+      // Si no se detectó por nombre, forzamos lectura de contenido
       if (!isSheet) {
         try {
           if (file.mimetype === "application/pdf") {
+            console.log(
+              `🔍 Iniciando análisis de contenido para PDF: ${file.originalname}`,
+            );
             const run = await openai.beta.threads.createAndRunAndPoll({
               assistant_id: assistantId,
-              // FORZAMOS instrucciones de sistema para que NO use su personalidad de chat
               instructions:
-                "Actúa como un extractor de datos JSON. Tu única fuente de verdad es el contenido del archivo adjunto. Si no ves el archivo, usa la herramienta file_search.",
+                "Eres un experto en ingeniería. Tu única tarea es leer el archivo adjunto y decir si es una ficha técnica. Responde SOLO JSON.",
               thread: {
                 messages: [
                   {
                     role: "user",
-                    content: `INSPECCIÓN TÉCNICA: Analiza internamente el archivo "${file.originalname}".
-                    
-                    PASOS:
-                    1. Abre el archivo con file_search.
-                    2. Busca tablas con palabras como: 'Frenos', 'Motor', 'Dimensiones', 'mm', 'Torque', 'Potencia'.
-                    3. Si encuentras CUALQUIER dato técnico, responde {"isTechnicalSheet": true}.
-                    4. Si es un documento sin datos de ingeniería, responde {"isTechnicalSheet": false}.
-                    
-                    REGLA DE ORO: No te dejes engañar por el nombre del archivo. Lee el contenido.`,
+                    content: `Analiza el contenido de "${file.originalname}". Busca especificaciones, tablas o datos técnicos. Responde JSON: {"isTechnicalSheet": boolean}`,
                     attachments: [
                       {
                         file_id: fileContext.id,
@@ -204,22 +203,14 @@ exports.setupAssistant = async (req, res) => {
               },
             });
 
-            console.log(
-              Hola |
-                `🚀 Run creado para ${file.originalname}. Status: ${run.status}`,
-            );
+            console.log(`🚀 Run finalizado. Status: ${run.status}`);
 
             if (run.status === "completed") {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
               );
               const rawResponse = msgs.data[0].content[0].text.value;
-
-              // LOG CRÍTICO: Vamos a ver qué dice Riley exactamente en la consola
-              console.log(
-                `🔍 Riley analizó ${file.originalname} y respondió:`,
-                rawResponse,
-              );
+              console.log(`🤖 Riley respondió: ${rawResponse}`);
 
               const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
               if (jsonMatch) {
@@ -228,6 +219,7 @@ exports.setupAssistant = async (req, res) => {
               }
             }
           } else if (file.mimetype.startsWith("image/")) {
+            console.log(`🔍 Analizando imagen mediante GPT-4o Vision...`);
             const vision = await openai.chat.completions.create({
               model: "gpt-4o",
               messages: [
@@ -236,7 +228,7 @@ exports.setupAssistant = async (req, res) => {
                   content: [
                     {
                       type: "text",
-                      text: '¿Es ficha técnica? JSON: {"isTechnicalSheet": boolean}',
+                      text: '¿Es esta una ficha técnica con datos de ingeniería? JSON: {"isTechnicalSheet": boolean}',
                     },
                     {
                       type: "image_url",
@@ -255,18 +247,18 @@ exports.setupAssistant = async (req, res) => {
           }
         } catch (err) {
           console.error(
-            `❌ Error analizando ${file.originalname}:`,
+            `❌ Error en el análisis profundo de ${file.originalname}:`,
             err.message,
           );
         }
       }
 
-      // Borrar VS temporal
+      // Limpieza del VS temporal
       await openai.beta.vectorStores.del(tempVectorStore.id);
 
       if (email) {
         console.log(
-          `📊 RESULTADO PARA [${file.originalname}]: ${isSheet ? "FICHA TÉCNICA" : "IMAGEN/OTRO"}`,
+          `📊 RESULTADO FINAL [${file.originalname}]: ${isSheet ? "FICHA TÉCNICA" : "IMAGEN/OTRO"}`,
         );
         await updateCounter(tenantId, email, isSheet);
       }
@@ -275,7 +267,6 @@ exports.setupAssistant = async (req, res) => {
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
     const finalFileNames = [...(Item?.fileNames || []), ...newFileNames];
 
-    // Actualización final del Asistente (Vector Store persistente)
     if (newFileIds.length > 0) {
       const mainVectorStore = await openai.beta.vectorStores.create({
         name: `VS-${tenantId}-${Date.now()}`,
@@ -306,6 +297,7 @@ exports.setupAssistant = async (req, res) => {
     );
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
+    console.error("❌ Error General en setupAssistant:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -383,7 +375,6 @@ exports.analyzeProductImage = async (req, res) => {
         if (match) result = { ...result, ...JSON.parse(match[0]) };
       }
 
-      // Limpieza
       await openai.files.del(f.id);
       await openai.beta.vectorStores.del(vs.id);
       await openai.beta.assistants.del(tempId);
