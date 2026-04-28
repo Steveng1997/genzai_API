@@ -14,6 +14,7 @@ const upload = multer({
 });
 
 router.get("/get-config/:tenantId", aiController.getConfig);
+router.get("/get-history/:tenantId", aiController.getChatHistory);
 
 router.post(
   "/setup-assistant",

@@ -52,6 +52,46 @@ const createOpenAIAssistant = async (company) => {
   });
 };
 
+// --- NUEVO MÉTODO: TRAER HISTORIAL DE OPENAI ---
+
+exports.getChatHistory = async (req, res) => {
+  const { tenantId } = req.params;
+
+  try {
+    // 1. Buscamos el threadId activo en DynamoDB para ese tenant
+    const { Items } = await dynamoDB.send(
+      new ScanCommand({
+        TableName: TABLE_CONFIGS,
+        FilterExpression: "tenantId = :t",
+        ExpressionAttributeValues: { ":t": tenantId.toString() },
+      }),
+    );
+
+    const threadId = Items?.[0]?.activeThreadId;
+
+    if (!threadId) {
+      console.log("ℹ️ No hay historial previo para este tenant.");
+      return res.status(200).json([]);
+    }
+
+    // 2. Recuperamos los mensajes desde OpenAI
+    const messages = await openai.beta.threads.messages.list(threadId);
+
+    // 3. Formateamos para que Flutter lo reciba limpio
+    const history = messages.data
+      .map((m) => ({
+        role: m.role,
+        content: m.content[0]?.text?.value || "",
+      }))
+      .reverse(); // reverse para que el orden sea cronológico
+
+    res.status(200).json(history);
+  } catch (e) {
+    console.error("❌ Error getChatHistory:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+};
+
 // --- MÉTODOS DE CONFIGURACIÓN Y CHAT ---
 
 exports.getConfig = async (req, res) => {
@@ -154,16 +194,12 @@ exports.setupAssistant = async (req, res) => {
 
     for (const file of files) {
       console.log(`\n--- INICIO PROCESAMIENTO: ${file.originalname} ---`);
-      console.log(`DEBUG: file.mimetype original = "${file.mimetype}"`);
       let mimeTypeForOpenAI = file.mimetype;
       if (
         file.originalname.toLowerCase().endsWith(".pdf") &&
         file.mimetype === "application/octet-stream"
       ) {
         mimeTypeForOpenAI = "application/pdf";
-        console.log(
-          "🛠️ Corrigiendo mimetype de octet-stream a application/pdf",
-        );
       }
 
       const fileContext = await openai.files.create({
@@ -192,15 +228,10 @@ exports.setupAssistant = async (req, res) => {
       const sheetKeywords = ["ficha", "tecnica", "spec", "manual", "datos"];
 
       if (sheetKeywords.some((k) => nameToTest.includes(k))) {
-        console.log(`📌 Match por NOMBRE detectado en [${file.originalname}]`);
         isSheet = true;
       }
 
-      console.log(`DEBUG: isSheet antes de análisis profundo = ${isSheet}`);
-
       if (!isSheet) {
-        console.log(`⚠️ Entrando a bloque de ANÁLISIS PROFUNDO...`);
-        console.log(`DEBUG setupAssistant: file.mimetype = "${file.mimetype}"`);
         try {
           const isPDF =
             mimeTypeForOpenAI === "application/pdf" ||
@@ -210,9 +241,6 @@ exports.setupAssistant = async (req, res) => {
             /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
 
           if (isPDF) {
-            console.log(`🔍 Analizando como PDF: ${file.originalname}`);
-
-            // 2. CORRECCIÓN DE MÉTODO (Usamos createAndPoll que es más estándar en v4.x)
             const thread = await openai.beta.threads.create({
               messages: [
                 {
@@ -241,13 +269,11 @@ exports.setupAssistant = async (req, res) => {
                 run.thread_id,
               );
               const rawResponse = msgs.data[0].content[0].text.value;
-              console.log(`🤖 Respuesta: ${rawResponse}`);
               const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
               if (jsonMatch)
                 isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet === true;
             }
           } else if (isImage) {
-            console.log(`🔍 Analizando como IMAGEN...`);
             const vision = await openai.chat.completions.create({
               model: "gpt-4o",
               messages: [
@@ -328,14 +354,12 @@ exports.analyzeProductImage = async (req, res) => {
     if (!file)
       return res.status(400).json({ error: "No se recibió ningún archivo" });
 
-    // 1. CORRECCIÓN CRÍTICA DE MIMETYPE (PDF como octet-stream)
     let mimeTypeForOpenAI = file.mimetype;
     if (
       file.originalname.toLowerCase().endsWith(".pdf") &&
       file.mimetype === "application/octet-stream"
     ) {
       mimeTypeForOpenAI = "application/pdf";
-      console.log("🛠️ Corrigiendo mimetype de octet-stream a application/pdf");
     }
 
     const nameToTest = file.originalname.toLowerCase();
@@ -345,7 +369,6 @@ exports.analyzeProductImage = async (req, res) => {
       file.mimetype.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
 
-    // Prompt de extracción exhaustivo para tus campos de base de datos
     const extractionPrompt = `
       Analiza este archivo y extrae un JSON con este formato exacto:
       {
@@ -362,14 +385,12 @@ exports.analyzeProductImage = async (req, res) => {
         "colors": "string",
         "observations": "string"
       }
-      Si no encuentras un valor, usa "N/A" para texto o 0 para números. No inventes datos.
+      Si no encuentras un valor, usa "N/A" para texto o 0 para números.
     `;
 
     let result = { isTechnicalSheet: false };
 
-    // --- FLUJO PARA IMÁGENES ---
     if (isImage) {
-      console.log("🔍 Analizando Imagen con GPT-4o...");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -389,10 +410,7 @@ exports.analyzeProductImage = async (req, res) => {
         response_format: { type: "json_object" },
       });
       result = JSON.parse(resp.choices[0].message.content);
-    }
-    // --- FLUJO PARA PDFS ---
-    else if (isPDF) {
-      console.log("🔍 Analizando PDF con Assistants...");
+    } else if (isPDF) {
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
           type: mimeTypeForOpenAI,
@@ -427,21 +445,15 @@ exports.analyzeProductImage = async (req, res) => {
         if (match) result = JSON.parse(match[0]);
       }
 
-      // Limpieza de OpenAI
       await openai.files.del(f.id);
       await openai.beta.vectorStores.del(vs.id);
       await openai.beta.assistants.del(tempAssistant.id);
     }
 
-    // 3. ACTUALIZACIÓN DE CONTADOR (Ficha vs Imagen)
     if (email) {
       await updateCounter(tenantId, email, result.isTechnicalSheet);
     }
 
-    console.log(
-      `📊 Análisis completo (${result.isTechnicalSheet ? "FICHA" : "IMAGEN"}):`,
-      result.name,
-    );
     res.status(200).json(result);
   } catch (e) {
     console.error("❌ Error en analyzeProductImage:", e.message);
