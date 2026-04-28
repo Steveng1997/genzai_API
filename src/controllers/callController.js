@@ -45,6 +45,7 @@ exports.makeSmartCall = async (req, res) => {
 
     let config = configs?.[0];
 
+    // 🤖 LÓGICA DE CREACIÓN/VINCULACIÓN DE ASISTENTE VAPI
     if (!config?.assistantId && config?.openaiAssistantId) {
       console.log("🤖 Creando asistente en Vapi automáticamente...");
       try {
@@ -55,10 +56,12 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
+              // IMPORTANTE: Aquí vinculamos el Assistant ID de OpenAI
+              assistantId: config.openaiAssistantId,
               messages: [
                 {
                   role: "system",
-                  content: `Vinculado a OpenAI Assistant: ${config.openaiAssistantId}`,
+                  content: `Vinculado a OpenAI Assistant: ${config.openaiAssistantId}. Tienes acceso a file_search para leer fichas técnicas.`,
                 },
               ],
             },
@@ -194,21 +197,26 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
+              // ESTO ES CLAVE: Vincula el cerebro de OpenAI que tiene los archivos
+              assistantId: config.openaiAssistantId,
               messages: [
                 {
                   role: "system",
                   content: `Eres Riley, una experta vendedora de autos profesional de la empresa ${company}. 
-                    
-                    CONTEXTO TEMPORAL: Hoy es ${fechaHoy}.
-                    
-                    RACIOCINIO DE PRODUCTOS E INVENTARIO:
-                    - Tienes la capacidad de entender variaciones fonéticas o errores de escritura en los modelos de autos. 
-                    - Si un cliente menciona "toyotas", entiende que se refiere a "Toyota".
-                    - Si mencionan "sparkt jt" o "spark uiti", reconoce que se refiere al modelo "Chevrolet Spark". 
-                    - Tu lógica debe asociar cualquier nombre mal escrito con el producto más lógico y cercano del inventario de ${company}.
-                    
-                    ESTADOS Y PROGRESO (ESCALA OBLIGATORIA):
-                    0. No_contesto (0%): No contestó la llamada o cayó a buzón.
+
+                  CONTEXTO TEMPORAL: Hoy es ${fechaHoy}.
+
+                  ACCESO A DOCUMENTOS Y CONOCIMIENTO (CRÍTICO):
+                  - Tienes acceso directo a FICHAS TÉCNICAS y documentos PDF.
+                  - Si el cliente pregunta por detalles técnicos (medidas, torque, HP, airbags, frenos ABS), DEBES usar 'file_search' para dar el dato exacto.
+                  - NUNCA inventes datos. Si el PDF dice que mide 4,740mm o tiene 7 airbags, dile exactamente eso.
+                  - Si el sistema tarda, di: "Sigo aquí, estoy verificando el dato exacto en la ficha técnica...".
+
+                  RACIOCINIO DE PRODUCTOS E INVENTARIO:
+                  - Entiende variaciones fonéticas: "Toyotas" es Toyota, "Spark uiti" es Chevrolet Spark. Asocia errores al modelo más lógico.
+
+                  ESTADOS Y PROGRESO:
+                  0. No_contesto (0%): No contestó la llamada o cayó a buzón.
                     1. Contacto (10%): Contestó y hubo saludo inicial exitoso.
                     2. Información (30%): Se brindó detalle de vehículos o se enviará info.
                     3. Interés (50%): El cliente mostró interés real en modelos específicos.
@@ -217,85 +225,78 @@ exports.makeSmartCall = async (req, res) => {
                     6. Cierre (100%): Venta confirmada.
                     7. Pérdida (0%): El cliente indica que ya no está interesado.
                     
-                    REGLAS DE ORO (PROHIBIDO FALLAR):
-                    1. EMPATÍA Y SONDEO: No lances ofertas de inmediato. Saluda y pregunta necesidades.
-                    2. BÚSQUEDA DE INVENTARIO: Di "Permítame un segundo reviso...". PROHIBIDO decir "PDF" o "archivo".
-                    3. NO COLGAR: Si el sistema tarda, di "Sigo aquí buscando los detalles".
-                    4. PRECIOS: Di los precios en palabras (ej: "Diez millones de pesos").
-                    5. ACTUALIZACIÓN DE ESTADO (CRÍTICO): Si el cliente pide agendar una cita o muestra disposición para ver el auto, tu estado DEBE ser CITA (70%) obligatoriamente.
-                    6. LÓGICA HORARIA: La empresa opera de 7:00 a.m. a 6:00 p.m.
+                  PENSAMIENTO ANALÍTICO E INFERENCIA:
+                  - Tu objetivo es clasificar el avance real. Si hubo conversación fluida, nunca entregues 1%.
+                  - Si el cliente acepta una cita, aunque no se concrete la hora exacta aún, ya estás en 70%.
+                  - Si el cliente solo pide información de los PDFs, estás en 30%.
+                  - Al finalizar, evalúa: si usaste 'create_task', el estado es CITA y el progreso 70% obligatoriamente.
 
-                    PENSAMIENTO ANALÍTICO E INFERENCIA:
-                    - Tu objetivo es clasificar el avance real. Si hubo conversación fluida, nunca entregues 1%.
-                    - Si el cliente acepta una cita, aunque no se concrete la hora exacta aún, ya estás en 70%.
-                    - Si el cliente solo pide catálogos o información general, estás en 30%.
-                    - Al finalizar, evalúa: si usaste 'create_task', el estado es CITA y el progreso 70%.
-    
-                    FLUJO DE CONVERSACIÓN:
-                    1. SALUDO: ${tempGreeting} ${customer.fullName}.
-                    2. SONDEO: Entiende qué busca el cliente antes de ofrecer modelos.
-                    3. INVENTARIO: Da opciones reales del inventario adjunto.
-                    4. CIERRE: Pregunta método de pago (Efectivo o Transferencia) antes de la cita.
-    
-                    AGENDAMIENTO DE CITAS:
-                    1. Pregunta DÍA y luego HORA.
-                    2. Si el cliente dice "mañana", calcula la fecha basándote en que hoy es ${fechaHoy}.
-                    3. FORMATO CAMPO 'cita': "[Día], [Hora] [a.m./p.m.]". Ejemplo: "Martes, 3:00 p.m.".
-                    4. CONFIRMA con el cliente y luego usa la herramienta 'create_task'. Es OBLIGATORIO usar la herramienta si se acuerda una cita.
+                  REGLAS DE ORO:
+                  1. EMPATÍA Y SONDEO: Saluda y sondea necesidades antes de ofrecer.
+                  2. DISCRECIÓN: Prohibido decir "PDF". Di "revisando mis registros".
+                  3. PRECIOS: Siempre en palabras (ej: "Cien millones de pesos").
+                  4. LÓGICA HORARIA: Operamos de 7:00 a.m. a 6:00 p.m.
+                  5. NO COLGAR: Si buscas en documentos, mantén al cliente informado.
 
-                    INSTRUCCIÓN DE CIERRE DE DATOS:
-                    Es vital que analices la conversación. El resumen en 'description' debe ser muy detallado (ej: "Interesado en SUV Mazda CX-5, se agendó cita para el miércoles"). No cierres sin actualizar el progreso al nivel más alto alcanzado.
-    
-                    DATOS OBLIGATORIOS 'create_task':
-                    - tenantId: "${tenantId}"
-                    - clientId: "${customer.clientId}"
-                    - customerName: "${customer.fullName}"
-                    - company: "${company}"
-                    - cita: (El horario acordado en el formato especificado)`,
+                  FLUJO DE CONVERSACIÓN:
+                  1. SALUDO: ${tempGreeting} ${customer.fullName}.
+                  2. SONDEO Y BÚSQUEDA: Usa los PDFs para dar opciones reales del inventario.
+                  3. CIERRE: Pregunta método de pago antes de la cita.
+
+                  AGENDAMIENTO DE CITAS (USO DE 'create_task'):
+                  1. Pregunta DÍA y luego HORA. 
+                  2. Si el cliente dice "mañana" o "el jueves", calcula la fecha real basándote en que hoy es ${fechaHoy}.
+                  3. FORMATO CAMPO 'cita': "[Día], [Hora] [a.m./p.m.]". Ejemplo: "Lunes, 10:00 a.m.".
+                  4. Es OBLIGATORIO usar 'create_task' si se acuerda la cita.
+
+                  DATOS OBLIGATORIOS 'create_task':
+                  - tenantId: "${tenantId}", clientId: "${customer.clientId}", customerName: "${customer.fullName}", company: "${company}", cita: (Horario calculado y acordado).`,
                 },
               ],
-              tools: [
-                {
-                  type: "function",
-                  messages: [
-                    {
-                      type: "request-start",
-                      content: "Un momento, estoy agendando tu cita...",
-                    },
-                  ],
-                  function: {
-                    name: "create_task",
-                    description: "Registra una cita o tarea con fecha y hora.",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        titulo: { type: "string" },
-                        detalle: { type: "string" },
-                        tenantId: { type: "string" },
-                        clientId: { type: "string" },
-                        customerName: { type: "string" },
-                        company: { type: "string" },
-                        cita: { type: "string" },
-                      },
-                      required: [
-                        "titulo",
-                        "detalle",
-                        "tenantId",
-                        "clientId",
-                        "customerName",
-                        "company",
-                        "cita",
-                      ],
-                    },
-                  },
-                  server: {
-                    url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
-                  },
-                },
-              ],
+              // HABILITAMOS FILE SEARCH EN EL OVERRIDE
+              tools: [{ type: "file_search" }],
             },
           },
         };
+
+        // Añadimos la herramienta create_task al payload final
+        vapiPayload.assistantOverrides.model.tools.push({
+          type: "function",
+          messages: [
+            {
+              type: "request-start",
+              content: "Un momento, estoy agendando tu cita...",
+            },
+          ],
+          function: {
+            name: "create_task",
+            description: "Registra una cita o tarea con fecha y hora.",
+            parameters: {
+              type: "object",
+              properties: {
+                titulo: { type: "string" },
+                detalle: { type: "string" },
+                tenantId: { type: "string" },
+                clientId: { type: "string" },
+                customerName: { type: "string" },
+                company: { type: "string" },
+                cita: { type: "string" },
+              },
+              required: [
+                "titulo",
+                "detalle",
+                "tenantId",
+                "clientId",
+                "customerName",
+                "company",
+                "cita",
+              ],
+            },
+          },
+          server: {
+            url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
+          },
+        });
 
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
