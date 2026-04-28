@@ -7,10 +7,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
-/**
- * Actualiza el contador en DynamoDB basándose en el tipo de documento detectado.
- * Evita errores forzando la comparación booleana.
- */
 const updateCounter = async (tenantId, email, isTechnicalSheet) => {
   const isSheet =
     isTechnicalSheet === true ||
@@ -40,28 +36,12 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
   }
 };
 
-/**
- * Crea el asistente Riley con instrucciones críticas de inspección profunda.
- */
 const createOpenAIAssistant = async (company) => {
   return await openai.beta.assistants.create({
     name: `Riley - Clasificador - ${company || "Empresa"}`,
-    instructions: `Eres Riley, experta en clasificación de documentos de ingeniería y automotrices.
-        
-        REGLA DE ORO: Ignora el nombre del archivo. Debes buscar evidencia técnica interna.
-        
-        CRITERIOS PARA FICHA TÉCNICA (isTechnicalSheet: true):
-        - Presencia de medidas técnicas (mm, cm, metros, kg, litros).
-        - Especificaciones mecánicas (Torque, HP, Cilindraje, Válvulas).
-        - Equipamiento de seguridad (Airbags, ABS, EBD, ISOFIX).
-        - Tablas comparativas de versiones o colores oficiales.
-        
-        CRITERIOS PARA IMAGEN DE PRODUCTO (isTechnicalSheet: false):
-        - Fotos estéticas, estilo "lifestyle" o catálogo visual sin tablas de datos.
-        - Documentos que solo contienen logos o nombres sin especificaciones.
-        
-        Responde exclusivamente en formato JSON puro:
-        {"isTechnicalSheet": boolean, "name": "nombre del producto", "price": número}`,
+    instructions: `Eres Riley. Tu única misión es detectar si un documento es una FICHA TÉCNICA (isTechnicalSheet: true) o una IMAGEN/PUBLICIDAD (isTechnicalSheet: false). 
+        Busca: medidas (mm), torque, potencia, airbags, frenos. 
+        Responde SOLO JSON: {"isTechnicalSheet": boolean}`,
     model: "gpt-4o",
     tools: [{ type: "file_search" }],
   });
@@ -172,9 +152,12 @@ exports.setupAssistant = async (req, res) => {
       newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
 
+      // --- LÓGICA DE CLASIFICACIÓN REFORZADA ---
       let isSheet = false;
-      const fileNameLower = file.originalname.toLowerCase();
-      const keywords = [
+      const nameToTest = file.originalname.toLowerCase();
+
+      // 1. Hard-check por nombre (Inmediato)
+      const sheetKeywords = [
         "ficha",
         "tecnica",
         "spec",
@@ -182,14 +165,13 @@ exports.setupAssistant = async (req, res) => {
         "actyon",
         "ssangyong",
         "kgm",
+        "pdf",
       ];
-
-      // 1. Doble validación: Si el nombre contiene palabras clave, se marca como ficha técnica de inmediato
-      if (keywords.some((key) => fileNameLower.includes(key))) {
+      if (sheetKeywords.some((k) => nameToTest.includes(k))) {
         isSheet = true;
       }
 
-      // 2. Validación profunda por IA si el nombre no es concluyente
+      // 2. Solo si el nombre no ayudó, preguntamos a la IA
       if (!isSheet) {
         try {
           if (file.mimetype === "application/pdf") {
@@ -199,7 +181,7 @@ exports.setupAssistant = async (req, res) => {
                 messages: [
                   {
                     role: "user",
-                    content: `ANALIZA EL CONTENIDO: "${file.originalname}". Busca tablas de ingeniería, medidas en mm o sistemas de seguridad. Responde ÚNICAMENTE el JSON: {"isTechnicalSheet": boolean}`,
+                    content: `Inspecciona este PDF. ¿Tiene tablas técnicas? Responde JSON: {"isTechnicalSheet": boolean}`,
                     attachments: [
                       {
                         file_id: fileContext.id,
@@ -214,10 +196,10 @@ exports.setupAssistant = async (req, res) => {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
               );
-              const rawText = msgs.data[0].content[0].text.value;
-              const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+              const jsonMatch =
+                msgs.data[0].content[0].text.value.match(/\{.*\}/s);
               if (jsonMatch)
-                isSheet = !!JSON.parse(jsonMatch[0]).isTechnicalSheet;
+                isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet;
             }
           } else if (file.mimetype.startsWith("image/")) {
             const vision = await openai.chat.completions.create({
@@ -228,7 +210,7 @@ exports.setupAssistant = async (req, res) => {
                   content: [
                     {
                       type: "text",
-                      text: '¿Es una ficha técnica con medidas? JSON: {"isTechnicalSheet": boolean}',
+                      text: '¿Es ficha técnica? JSON: {"isTechnicalSheet": boolean}',
                     },
                     {
                       type: "image_url",
@@ -241,13 +223,12 @@ exports.setupAssistant = async (req, res) => {
               ],
               response_format: { type: "json_object" },
             });
-            isSheet = !!JSON.parse(vision.choices[0].message.content)
-              .isTechnicalSheet;
+            isSheet = JSON.parse(
+              vision.choices[0].message.content,
+            ).isTechnicalSheet;
           }
         } catch (err) {
-          console.error("Error en validación profunda:", err);
-          // Fallback seguro por nombre si la IA falla o da timeout
-          isSheet = keywords.some((key) => fileNameLower.includes(key));
+          console.error("IA falló, manteniendo isSheet como:", isSheet);
         }
       }
 
@@ -296,8 +277,16 @@ exports.analyzeProductImage = async (req, res) => {
     if (!file) return res.status(400).json({ error: "No file" });
 
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
-    const fileNameLower = file.originalname.toLowerCase();
-    const keywords = ["ficha", "tecnica", "spec", "manual"];
+    const nameToTest = file.originalname.toLowerCase();
+
+    // Check rápido
+    if (
+      ["ficha", "tecnica", "spec", "manual", "actyon", "ssangyong", "kgm"].some(
+        (k) => nameToTest.includes(k),
+      )
+    ) {
+      result.isTechnicalSheet = true;
+    }
 
     if (file.mimetype.startsWith("image/")) {
       const resp = await openai.chat.completions.create({
@@ -308,7 +297,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'Busca tablas de ingeniería. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Busca tablas técnicas. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               },
               {
                 type: "image_url",
@@ -321,8 +310,7 @@ exports.analyzeProductImage = async (req, res) => {
         ],
         response_format: { type: "json_object" },
       });
-      const parsed = JSON.parse(resp.choices[0].message.content);
-      result = { ...result, ...parsed };
+      result = { ...result, ...JSON.parse(resp.choices[0].message.content) };
     } else if (file.mimetype === "application/pdf") {
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname),
@@ -336,7 +324,7 @@ exports.analyzeProductImage = async (req, res) => {
             {
               role: "user",
               content:
-                'Analiza medidas y seguridad. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               attachments: [
                 { file_id: f.id, tools: [{ type: "file_search" }] },
               ],
@@ -346,19 +334,11 @@ exports.analyzeProductImage = async (req, res) => {
       });
       if (r.status === "completed") {
         const m = await openai.beta.threads.messages.list(r.thread_id);
-        const match = m.data[0].content[0].text.value.match(/\{[\s\S]*\}/);
+        const match = m.data[0].content[0].text.value.match(/\{.*\}/s);
         if (match) result = { ...result, ...JSON.parse(match[0]) };
       }
       await openai.files.del(f.id);
       await openai.beta.assistants.del(tempId);
-    }
-
-    // Doble validación final por nombre si la IA falló
-    if (
-      !result.isTechnicalSheet &&
-      keywords.some((key) => fileNameLower.includes(key))
-    ) {
-      result.isTechnicalSheet = true;
     }
 
     if (email) await updateCounter(tenantId, email, result.isTechnicalSheet);
