@@ -204,6 +204,11 @@ exports.setupAssistant = async (req, res) => {
               },
             });
 
+            console.log(
+              Hola |
+                `🚀 Run creado para ${file.originalname}. Status: ${run.status}`,
+            );
+
             if (run.status === "completed") {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
