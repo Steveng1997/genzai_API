@@ -148,39 +148,41 @@ exports.setupAssistant = async (req, res) => {
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
+
+      // 1. Crear Vector Store temporal para validación
+      const tempVectorStore = await openai.beta.vectorStores.create({
+        name: `Temp-Verify-${fileContext.id}`,
+        file_ids: [fileContext.id],
+      });
+
+      await openai.beta.assistants.update(assistantId, {
+        tool_resources: {
+          file_search: { vector_store_ids: [tempVectorStore.id] },
+        },
+      });
+
       newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
 
       let isSheet = false;
       const nameToTest = file.originalname.toLowerCase();
-
       const sheetKeywords = ["ficha", "tecnica", "spec", "manual"];
+
       if (sheetKeywords.some((k) => nameToTest.includes(k))) {
         isSheet = true;
       }
 
-      // 2. Solo si el nombre no ayudó, preguntamos a la IA
       if (!isSheet) {
         try {
           if (file.mimetype === "application/pdf") {
-            // SOBREESCRIBIMOS las instrucciones del asistente solo para este proceso
             const run = await openai.beta.threads.createAndRunAndPoll({
               assistant_id: assistantId,
-              instructions: `Eres un Ingeniero Mecánico experto. 
-              Tu única función es analizar archivos y determinar si son FICHAS TÉCNICAS.
-              REGLA: Si el documento contiene tablas de torque (Nm), potencia (HP), dimensiones (mm) o seguridad, es una ficha técnica.
-              RESPUESTA OBLIGATORIA: Debes responder exclusivamente un objeto JSON: {"isTechnicalSheet": true/false}`,
+              instructions: `Usa file_search para leer el archivo. Responde JSON: {"isTechnicalSheet": boolean}`,
               thread: {
                 messages: [
                   {
                     role: "user",
-                    content: `Analiza el contenido de este archivo: "${file.originalname}". Usa file_search para leerlo internamente y dime si es una ficha técnica.`,
-                    attachments: [
-                      {
-                        file_id: fileContext.id,
-                        tools: [{ type: "file_search" }],
-                      },
-                    ],
+                    content: `¿Es ${file.originalname} una ficha técnica?`,
                   },
                 ],
               },
@@ -191,20 +193,11 @@ exports.setupAssistant = async (req, res) => {
                 run.thread_id,
               );
               const rawText = msgs.data[0].content[0].text.value;
-
-              // Log para que tú veas qué está pensando Riley en la consola
-              console.log(
-                `🧠 Riley dice sobre ${file.originalname}: ${rawText}`,
-              );
-
               const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                const result = JSON.parse(jsonMatch[0]);
-                isSheet = result.isTechnicalSheet === true;
-              }
+              if (jsonMatch)
+                isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet === true;
             }
           } else if (file.mimetype.startsWith("image/")) {
-            // Para imágenes usamos GPT-4o Visión
             const vision = await openai.chat.completions.create({
               model: "gpt-4o",
               messages: [
@@ -213,7 +206,7 @@ exports.setupAssistant = async (req, res) => {
                   content: [
                     {
                       type: "text",
-                      text: '¿Esta imagen es una ficha técnica de ingeniería? JSON: {"isTechnicalSheet": boolean}',
+                      text: '¿Es ficha técnica? JSON: {"isTechnicalSheet": boolean}',
                     },
                     {
                       type: "image_url",
@@ -235,9 +228,11 @@ exports.setupAssistant = async (req, res) => {
             `❌ Error analizando ${file.originalname}:`,
             err.message,
           );
-          isSheet = false; // Fallback por seguridad
         }
       }
+
+      // Borrar VS temporal
+      await openai.beta.vectorStores.del(tempVectorStore.id);
 
       if (email) {
         console.log(
@@ -250,13 +245,16 @@ exports.setupAssistant = async (req, res) => {
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
     const finalFileNames = [...(Item?.fileNames || []), ...newFileNames];
 
+    // Actualización final del Asistente (Vector Store persistente)
     if (newFileIds.length > 0) {
-      const vectorStore = await openai.beta.vectorStores.create({
+      const mainVectorStore = await openai.beta.vectorStores.create({
         name: `VS-${tenantId}-${Date.now()}`,
-        file_ids: newFileIds,
+        file_ids: finalFileIds,
       });
       await openai.beta.assistants.update(assistantId, {
-        tool_resources: { file_search: { vector_store_ids: [vectorStore.id] } },
+        tool_resources: {
+          file_search: { vector_store_ids: [mainVectorStore.id] },
+        },
       });
     }
 
@@ -291,11 +289,8 @@ exports.analyzeProductImage = async (req, res) => {
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
     const nameToTest = file.originalname.toLowerCase();
 
-    // Check rápido
     if (
-      ["ficha", "tecnica", "spec", "manual", "actyon", "ssangyong", "kgm"].some(
-        (k) => nameToTest.includes(k),
-      )
+      ["ficha", "tecnica", "spec", "manual"].some((k) => nameToTest.includes(k))
     ) {
       result.isTechnicalSheet = true;
     }
@@ -328,7 +323,17 @@ exports.analyzeProductImage = async (req, res) => {
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
+
+      const vs = await openai.beta.vectorStores.create({
+        name: `Validate-Single-${f.id}`,
+        file_ids: [f.id],
+      });
+
       const tempId = await createOpenAIAssistant("Validator").then((a) => a.id);
+      await openai.beta.assistants.update(tempId, {
+        tool_resources: { file_search: { vector_store_ids: [vs.id] } },
+      });
+
       const r = await openai.beta.threads.createAndRunAndPoll({
         assistant_id: tempId,
         thread: {
@@ -337,19 +342,20 @@ exports.analyzeProductImage = async (req, res) => {
               role: "user",
               content:
                 'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
-              attachments: [
-                { file_id: f.id, tools: [{ type: "file_search" }] },
-              ],
             },
           ],
         },
       });
+
       if (r.status === "completed") {
         const m = await openai.beta.threads.messages.list(r.thread_id);
         const match = m.data[0].content[0].text.value.match(/\{.*\}/s);
         if (match) result = { ...result, ...JSON.parse(match[0]) };
       }
+
+      // Limpieza
       await openai.files.del(f.id);
+      await openai.beta.vectorStores.del(vs.id);
       await openai.beta.assistants.del(tempId);
     }
 
