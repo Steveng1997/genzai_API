@@ -177,12 +177,28 @@ exports.setupAssistant = async (req, res) => {
           if (file.mimetype === "application/pdf") {
             const run = await openai.beta.threads.createAndRunAndPoll({
               assistant_id: assistantId,
-              instructions: `Usa file_search para leer el archivo. Responde JSON: {"isTechnicalSheet": boolean}`,
+              // FORZAMOS instrucciones de sistema para que NO use su personalidad de chat
+              instructions:
+                "Actúa como un extractor de datos JSON. Tu única fuente de verdad es el contenido del archivo adjunto. Si no ves el archivo, usa la herramienta file_search.",
               thread: {
                 messages: [
                   {
                     role: "user",
-                    content: `¿Es ${file.originalname} una ficha técnica?`,
+                    content: `INSPECCIÓN TÉCNICA: Analiza internamente el archivo "${file.originalname}".
+                    
+                    PASOS:
+                    1. Abre el archivo con file_search.
+                    2. Busca tablas con palabras como: 'Frenos', 'Motor', 'Dimensiones', 'mm', 'Torque', 'Potencia'.
+                    3. Si encuentras CUALQUIER dato técnico, responde {"isTechnicalSheet": true}.
+                    4. Si es un documento sin datos de ingeniería, responde {"isTechnicalSheet": false}.
+                    
+                    REGLA DE ORO: No te dejes engañar por el nombre del archivo. Lee el contenido.`,
+                    attachments: [
+                      {
+                        file_id: fileContext.id,
+                        tools: [{ type: "file_search" }],
+                      },
+                    ],
                   },
                 ],
               },
@@ -192,10 +208,19 @@ exports.setupAssistant = async (req, res) => {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
               );
-              const rawText = msgs.data[0].content[0].text.value;
-              const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-              if (jsonMatch)
-                isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet === true;
+              const rawResponse = msgs.data[0].content[0].text.value;
+
+              // LOG CRÍTICO: Vamos a ver qué dice Riley exactamente en la consola
+              console.log(
+                `🔍 Riley analizó ${file.originalname} y respondió:`,
+                rawResponse,
+              );
+
+              const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                isSheet = result.isTechnicalSheet === true;
+              }
             }
           } else if (file.mimetype.startsWith("image/")) {
             const vision = await openai.chat.completions.create({
