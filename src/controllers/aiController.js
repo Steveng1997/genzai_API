@@ -43,9 +43,10 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
 const createOpenAIAssistant = async (company) => {
   return await openai.beta.assistants.create({
     name: `Riley - Clasificador - ${company || "Empresa"}`,
-    instructions: `Eres Riley. Tu única misión es detectar si un documento es una FICHA TÉCNICA (isTechnicalSheet: true) o una IMAGEN/PUBLICIDAD (isTechnicalSheet: false). 
-        Busca: medidas (mm), torque, potencia, airbags, frenos.
-        Responde SOLO JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}`,
+    instructions: `Eres Riley. Tu misión es analizar documentos de productos. 
+    Detecta si es una FICHA TÉCNICA (isTechnicalSheet: true) con especificaciones, 
+    o una IMAGEN comercial (isTechnicalSheet: false). 
+    Extrae: name, price, brand, model, reference, stock, description.`,
     model: "gpt-4o",
     tools: [{ type: "file_search" }],
   });
@@ -324,49 +325,58 @@ exports.analyzeProductImage = async (req, res) => {
     const { tenantId, email } = req.body;
     const file = req.file;
 
-    if (!file) return res.status(400).json({ error: "No file" });
+    if (!file)
+      return res.status(400).json({ error: "No se recibió ningún archivo" });
 
-    // 1. CORRECCIÓN DE MIMETYPE (Octet-stream a PDF)
+    // 1. CORRECCIÓN CRÍTICA DE MIMETYPE (PDF como octet-stream)
     let mimeTypeForOpenAI = file.mimetype;
     if (
       file.originalname.toLowerCase().endsWith(".pdf") &&
       file.mimetype === "application/octet-stream"
     ) {
       mimeTypeForOpenAI = "application/pdf";
-      console.log(
-        "🛠️ Corrigiendo mimetype de octet-stream a application/pdf en analyzeProductImage",
-      );
+      console.log("🛠️ Corrigiendo mimetype de octet-stream a application/pdf");
     }
 
-    let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
     const nameToTest = file.originalname.toLowerCase();
-
-    // Detección previa por nombre
-    if (
-      ["ficha", "tecnica", "spec", "manual"].some((k) => nameToTest.includes(k))
-    ) {
-      result.isTechnicalSheet = true;
-    }
-
     const isPDF =
       mimeTypeForOpenAI === "application/pdf" || nameToTest.endsWith(".pdf");
     const isImage =
       file.mimetype.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
 
-    // --- CASO IMAGEN (GPT-4o Vision) ---
+    // Prompt de extracción exhaustivo para tus campos de base de datos
+    const extractionPrompt = `
+      Analiza este archivo y extrae un JSON con este formato exacto:
+      {
+        "isTechnicalSheet": boolean (true si es ficha técnica con medidas/specs, false si es solo foto),
+        "name": "string",
+        "price": number,
+        "brand": "string",
+        "model": "string",
+        "reference": "string",
+        "stock": number,
+        "description": "string",
+        "category": "string",
+        "productType": "string",
+        "colors": "string",
+        "observations": "string"
+      }
+      Si no encuentras un valor, usa "N/A" para texto o 0 para números. No inventes datos.
+    `;
+
+    let result = { isTechnicalSheet: false };
+
+    // --- FLUJO PARA IMÁGENES ---
     if (isImage) {
-      console.log("📷 Analizando imagen con GPT-4o Vision...");
+      console.log("🔍 Analizando Imagen con GPT-4o...");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
             role: "user",
             content: [
-              {
-                type: "text",
-                text: 'Analiza esta imagen de producto. Extrae la información en este formato JSON estricto: {"isTechnicalSheet": boolean, "name": "string", "price": number}. Si no hay precio, pon 0.',
-              },
+              { type: "text", text: extractionPrompt },
               {
                 type: "image_url",
                 image_url: {
@@ -378,12 +388,11 @@ exports.analyzeProductImage = async (req, res) => {
         ],
         response_format: { type: "json_object" },
       });
-      const aiData = JSON.parse(resp.choices[0].message.content);
-      result = { ...result, ...aiData };
-
-      // --- CASO PDF (OpenAI Assistants + File Search) ---
-    } else if (isPDF) {
-      console.log("📄 Analizando PDF con File Search...");
+      result = JSON.parse(resp.choices[0].message.content);
+    }
+    // --- FLUJO PARA PDFS ---
+    else if (isPDF) {
+      console.log("🔍 Analizando PDF con Assistants...");
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
           type: mimeTypeForOpenAI,
@@ -392,27 +401,20 @@ exports.analyzeProductImage = async (req, res) => {
       });
 
       const vs = await openai.beta.vectorStores.create({
-        name: `Validator-${uuidv4()}`,
+        name: `Temp-Analyze-${uuidv4()}`,
         file_ids: [f.id],
       });
 
       const tempAssistant = await openai.beta.assistants.create({
-        name: "Data Extractor",
-        instructions:
-          "Eres un extractor de datos. Busca el nombre del producto y su precio. Responde solo JSON.",
+        name: "Extractor Temporal",
+        instructions: "Extrae datos de productos en formato JSON.",
         model: "gpt-4o",
         tools: [{ type: "file_search" }],
         tool_resources: { file_search: { vector_store_ids: [vs.id] } },
       });
 
       const thread = await openai.beta.threads.create({
-        messages: [
-          {
-            role: "user",
-            content:
-              'Extrae del documento: {"isTechnicalSheet": boolean, "name": "string", "price": number}. Responde solo el objeto JSON.',
-          },
-        ],
+        messages: [{ role: "user", content: extractionPrompt }],
       });
 
       const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
@@ -420,27 +422,29 @@ exports.analyzeProductImage = async (req, res) => {
       });
 
       if (run.status === "completed") {
-        const m = await openai.beta.threads.messages.list(run.thread_id);
-        const content = m.data[0].content[0].text.value;
-        const match = content.match(/\{[\s\S]*\}/);
-        if (match) {
-          result = { ...result, ...JSON.parse(match[0]) };
-        }
+        const msgs = await openai.beta.threads.messages.list(run.thread_id);
+        const match = msgs.data[0].content[0].text.value.match(/\{[\s\S]*\}/);
+        if (match) result = JSON.parse(match[0]);
       }
 
-      // Limpieza de recursos temporales
+      // Limpieza de OpenAI
       await openai.files.del(f.id);
       await openai.beta.vectorStores.del(vs.id);
       await openai.beta.assistants.del(tempAssistant.id);
     }
 
-    // Actualización de contadores
-    if (email) await updateCounter(tenantId, email, result.isTechnicalSheet);
+    // 3. ACTUALIZACIÓN DE CONTADOR (Ficha vs Imagen)
+    if (email) {
+      await updateCounter(tenantId, email, result.isTechnicalSheet);
+    }
 
-    console.log("📊 RESULTADO FINAL:", result);
+    console.log(
+      `📊 Análisis completo (${result.isTechnicalSheet ? "FICHA" : "IMAGEN"}):`,
+      result.name,
+    );
     res.status(200).json(result);
   } catch (e) {
     console.error("❌ Error en analyzeProductImage:", e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: "Error procesando el análisis de la IA" });
   }
 };
