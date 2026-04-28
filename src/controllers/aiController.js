@@ -169,10 +169,14 @@ exports.setupAssistant = async (req, res) => {
                 messages: [
                   {
                     role: "user",
-                    content: `ORDEN CRÍTICA: Abre y lee el archivo "${file.originalname}". 
-                                NO te guíes por el nombre. 
-                                Busca dentro: ¿Hay tablas de torque, potencia, mm, o seguridad?
-                                Responde SOLO este JSON: {"isTechnicalSheet": boolean}`,
+                    content: `INSPECCIÓN TÉCNICA OBLIGATORIA: 
+                    He subido el archivo "${file.originalname}". 
+                    1. Usa la herramienta 'file_search' para leer TODO el contenido.
+                    2. Busca específicamente tablas de dimensiones, motor, torque o seguridad.
+                    3. Si encuentras datos numéricos de ingeniería (mm, HP, Nm, etc.), responde true.
+                    4. SI NO LEES EL ARCHIVO, NO RESPONDAS.
+                    
+                    Responde estrictamente en este formato JSON: {"isTechnicalSheet": boolean, "evidencia": "cita lo que encontraste"}`,
                     attachments: [
                       {
                         file_id: fileContext.id,
@@ -189,7 +193,12 @@ exports.setupAssistant = async (req, res) => {
                 run.thread_id,
               );
               const rawText = msgs.data[0].content[0].text.value;
-              // Regex mejorado para capturar JSON incluso con basura alrededor
+
+              // Log para que tú veas qué está pensando Riley en la consola
+              console.log(
+                `🧠 Riley dice sobre ${file.originalname}: ${rawText}`,
+              );
+
               const jsonMatch = rawText.match(/\{[\s\S]*\}/);
               if (jsonMatch) {
                 const result = JSON.parse(jsonMatch[0]);
