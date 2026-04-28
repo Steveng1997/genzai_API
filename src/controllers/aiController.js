@@ -163,20 +163,18 @@ exports.setupAssistant = async (req, res) => {
       if (!isSheet) {
         try {
           if (file.mimetype === "application/pdf") {
+            // SOBREESCRIBIMOS las instrucciones del asistente solo para este proceso
             const run = await openai.beta.threads.createAndRunAndPoll({
               assistant_id: assistantId,
+              instructions: `Eres un Ingeniero Mecánico experto. 
+              Tu única función es analizar archivos y determinar si son FICHAS TÉCNICAS.
+              REGLA: Si el documento contiene tablas de torque (Nm), potencia (HP), dimensiones (mm) o seguridad, es una ficha técnica.
+              RESPUESTA OBLIGATORIA: Debes responder exclusivamente un objeto JSON: {"isTechnicalSheet": true/false}`,
               thread: {
                 messages: [
                   {
                     role: "user",
-                    content: `INSPECCIÓN TÉCNICA OBLIGATORIA: 
-                    He subido el archivo "${file.originalname}". 
-                    1. Usa la herramienta 'file_search' para leer TODO el contenido.
-                    2. Busca específicamente tablas de dimensiones, motor, torque o seguridad.
-                    3. Si encuentras datos numéricos de ingeniería (mm, HP, Nm, etc.), responde true.
-                    4. SI NO LEES EL ARCHIVO, NO RESPONDAS.
-                    
-                    Responde estrictamente en este formato JSON: {"isTechnicalSheet": boolean, "evidencia": "cita lo que encontraste"}`,
+                    content: `Analiza el contenido de este archivo: "${file.originalname}". Usa file_search para leerlo internamente y dime si es una ficha técnica.`,
                     attachments: [
                       {
                         file_id: fileContext.id,
