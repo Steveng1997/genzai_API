@@ -144,18 +144,19 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
 
     for (const file of files) {
-      console.log(`\n--- PROCESANDO: ${file.originalname} ---`);
+      console.log(`\n--- INICIO PROCESAMIENTO: ${file.originalname} ---`);
+
       const fileContext = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname),
         purpose: "assistants",
       });
 
-      // 1. Crear Vector Store temporal para validación inmediata
       const tempVectorStore = await openai.beta.vectorStores.create({
         name: `Temp-Verify-${fileContext.id}`,
         file_ids: [fileContext.id],
       });
 
+      // Actualizar asistente con el VS temporal
       await openai.beta.assistants.update(assistantId, {
         tool_resources: {
           file_search: { vector_store_ids: [tempVectorStore.id] },
@@ -165,33 +166,37 @@ exports.setupAssistant = async (req, res) => {
       newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
 
-      let isSheet = false;
+      let isSheet = false; // Reset por cada archivo
       const nameToTest = file.originalname.toLowerCase();
       const sheetKeywords = ["ficha", "tecnica", "spec", "manual", "datos"];
 
-      // Validación por nombre
       if (sheetKeywords.some((k) => nameToTest.includes(k))) {
-        console.log(`📌 Match por nombre detectado.`);
+        console.log(`📌 Match por NOMBRE detectado en [${file.originalname}]`);
         isSheet = true;
       }
 
-      console.log(`Valor de isSheet tras análisis de nombre: ${isSheet}`);
-      // Si no se detectó por nombre, forzamos lectura de contenido
+      console.log(`DEBUG: isSheet antes de análisis profundo = ${isSheet}`);
+
+      // SI NO ES FICHA POR NOMBRE, ANALIZAMOS CONTENIDO
       if (!isSheet) {
+        console.log(
+          `⚠️ No se detectó por nombre. Entrando a bloque de ANÁLISIS PROFUNDO...`,
+        );
         try {
           if (file.mimetype === "application/pdf") {
             console.log(
-              `🔍 Iniciando análisis de contenido para PDF: ${file.originalname}`,
+              `🔍 Llamando a OpenAI (file_search) para PDF: ${file.originalname}`,
             );
+
             const run = await openai.beta.threads.createAndRunAndPoll({
               assistant_id: assistantId,
               instructions:
-                "Eres un experto en ingeniería. Tu única tarea es leer el archivo adjunto y decir si es una ficha técnica. Responde SOLO JSON.",
+                "Eres un clasificador de documentos técnicos. Lee el archivo y determina si es una ficha técnica de un producto (contiene tablas de medidas, materiales, motor, etc). Responde solo JSON.",
               thread: {
                 messages: [
                   {
                     role: "user",
-                    content: `Analiza el contenido de "${file.originalname}". Busca especificaciones, tablas o datos técnicos. Responde JSON: {"isTechnicalSheet": boolean}`,
+                    content: `¿Es "${file.originalname}" una ficha técnica? Analiza el contenido. Responde JSON: {"isTechnicalSheet": boolean}`,
                     attachments: [
                       {
                         file_id: fileContext.id,
@@ -203,23 +208,23 @@ exports.setupAssistant = async (req, res) => {
               },
             });
 
-            console.log(`🚀 Run finalizado. Status: ${run.status}`);
-
             if (run.status === "completed") {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
               );
               const rawResponse = msgs.data[0].content[0].text.value;
-              console.log(`🤖 Riley respondió: ${rawResponse}`);
+              console.log(`🤖 Riley dice sobre el contenido: ${rawResponse}`);
 
               const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
               if (jsonMatch) {
                 const result = JSON.parse(jsonMatch[0]);
                 isSheet = result.isTechnicalSheet === true;
               }
+            } else {
+              console.log(`❌ Run no completado. Status: ${run.status}`);
             }
           } else if (file.mimetype.startsWith("image/")) {
-            console.log(`🔍 Analizando imagen mediante GPT-4o Vision...`);
+            console.log(`🔍 Usando GPT-4o Vision para imagen...`);
             const vision = await openai.chat.completions.create({
               model: "gpt-4o",
               messages: [
@@ -228,7 +233,7 @@ exports.setupAssistant = async (req, res) => {
                   content: [
                     {
                       type: "text",
-                      text: '¿Es esta una ficha técnica con datos de ingeniería? JSON: {"isTechnicalSheet": boolean}',
+                      text: '¿Es esto una ficha técnica? JSON: {"isTechnicalSheet": boolean}',
                     },
                     {
                       type: "image_url",
@@ -246,19 +251,15 @@ exports.setupAssistant = async (req, res) => {
               true;
           }
         } catch (err) {
-          console.error(
-            `❌ Error en el análisis profundo de ${file.originalname}:`,
-            err.message,
-          );
+          console.error(`❌ Error analizando contenido:`, err.message);
         }
       }
 
-      // Limpieza del VS temporal
       await openai.beta.vectorStores.del(tempVectorStore.id);
 
       if (email) {
         console.log(
-          `📊 RESULTADO FINAL [${file.originalname}]: ${isSheet ? "FICHA TÉCNICA" : "IMAGEN/OTRO"}`,
+          `📊 RESULTADO FINAL PARA [${file.originalname}]: ${isSheet ? "FICHA TÉCNICA" : "IMAGEN/OTRO"}`,
         );
         await updateCounter(tenantId, email, isSheet);
       }
@@ -297,7 +298,7 @@ exports.setupAssistant = async (req, res) => {
     );
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
-    console.error("❌ Error General en setupAssistant:", e.message);
+    console.error("❌ Error setupAssistant:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -326,7 +327,7 @@ exports.analyzeProductImage = async (req, res) => {
             content: [
               {
                 type: "text",
-                text: 'Busca tablas técnicas. JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+                text: 'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
               },
               {
                 type: "image_url",
