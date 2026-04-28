@@ -100,6 +100,8 @@ exports.askRiley = async (req, res) => {
       role: "user",
       content: message,
     });
+
+    // Cambiamos createAndPoll por una ejecución manual si la librería falla
     const run = await openai.beta.threads.runs.createAndPoll(threadId, {
       assistant_id: assistantId,
     });
@@ -145,14 +147,24 @@ exports.setupAssistant = async (req, res) => {
 
     for (const file of files) {
       console.log(`\n--- INICIO PROCESAMIENTO: ${file.originalname} ---`);
+      console.log(`DEBUG: file.mimetype original = "${file.mimetype}"`);
 
-      // LOG SOLICITADO: Ver el valor real del mimetype enviado
-      console.log(
-        `DEBUG: file.mimetype para [${file.originalname}] es: "${file.mimetype}"`,
-      );
+      // 1. CORRECCIÓN DE MIMETYPE PARA OPENAI
+      let mimeTypeForOpenAI = file.mimetype;
+      if (
+        file.originalname.toLowerCase().endsWith(".pdf") &&
+        file.mimetype === "application/octet-stream"
+      ) {
+        mimeTypeForOpenAI = "application/pdf";
+        console.log(
+          "🛠️ Corrigiendo mimetype de octet-stream a application/pdf",
+        );
+      }
 
       const fileContext = await openai.files.create({
-        file: await OpenAI.toFile(file.buffer, file.originalname),
+        file: await OpenAI.toFile(file.buffer, file.originalname, {
+          type: mimeTypeForOpenAI,
+        }),
         purpose: "assistants",
       });
 
@@ -182,60 +194,55 @@ exports.setupAssistant = async (req, res) => {
       console.log(`DEBUG: isSheet antes de análisis profundo = ${isSheet}`);
 
       if (!isSheet) {
-        console.log(
-          `⚠️ No se detectó por nombre. Entrando a bloque de ANÁLISIS PROFUNDO...`,
-        );
-
+        console.log(`⚠️ Entrando a bloque de ANÁLISIS PROFUNDO...`);
         console.log(`DEBUG setupAssistant: file.mimetype = "${file.mimetype}"`);
         try {
-          // Robustez: Validar por Mimetype O por extensión de nombre
           const isPDF =
-            file.mimetype === "application/pdf" || nameToTest.endsWith(".pdf");
+            mimeTypeForOpenAI === "application/pdf" ||
+            nameToTest.endsWith(".pdf");
           const isImage =
             file.mimetype.startsWith("image/") ||
             /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
 
           if (isPDF) {
-            console.log(
-              `🔍 Llamando a OpenAI (file_search) para PDF detectado.`,
-            );
-            const run = await openai.beta.threads.createAndRunAndPoll({
-              assistant_id: assistantId,
-              instructions:
-                "Eres un clasificador de documentos técnicos. Lee el archivo y determina si es una ficha técnica. Responde solo JSON.",
-              thread: {
-                messages: [
-                  {
-                    role: "user",
-                    content: `¿Es "${file.originalname}" una ficha técnica? Analiza el contenido. Responde JSON: {"isTechnicalSheet": boolean}`,
-                    attachments: [
-                      {
-                        file_id: fileContext.id,
-                        tools: [{ type: "file_search" }],
-                      },
-                    ],
-                  },
-                ],
-              },
+            console.log(`🔍 Analizando como PDF: ${file.originalname}`);
+
+            // 2. CORRECCIÓN DE MÉTODO (Usamos createAndPoll que es más estándar en v4.x)
+            const thread = await openai.beta.threads.create({
+              messages: [
+                {
+                  role: "user",
+                  content: `¿Es "${file.originalname}" una ficha técnica? Responde JSON: {"isTechnicalSheet": boolean}`,
+                  attachments: [
+                    {
+                      file_id: fileContext.id,
+                      tools: [{ type: "file_search" }],
+                    },
+                  ],
+                },
+              ],
             });
+
+            const run = await openai.beta.threads.runs.createAndPoll(
+              thread.id,
+              {
+                assistant_id: assistantId,
+                instructions: "Responde solo JSON.",
+              },
+            );
 
             if (run.status === "completed") {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
               );
               const rawResponse = msgs.data[0].content[0].text.value;
-              console.log(
-                `🤖 Riley dice sobre el contenido PDF: ${rawResponse}`,
-              );
-
+              console.log(`🤖 Respuesta: ${rawResponse}`);
               const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                const result = JSON.parse(jsonMatch[0]);
-                isSheet = result.isTechnicalSheet === true;
-              }
+              if (jsonMatch)
+                isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet === true;
             }
           } else if (isImage) {
-            console.log(`🔍 Usando GPT-4o Vision para imagen detectada.`);
+            console.log(`🔍 Analizando como IMAGEN...`);
             const vision = await openai.chat.completions.create({
               model: "gpt-4o",
               messages: [
@@ -244,7 +251,7 @@ exports.setupAssistant = async (req, res) => {
                   content: [
                     {
                       type: "text",
-                      text: '¿Es esto una ficha técnica? JSON: {"isTechnicalSheet": boolean}',
+                      text: '¿Es ficha técnica? JSON: {"isTechnicalSheet": boolean}',
                     },
                     {
                       type: "image_url",
@@ -260,10 +267,6 @@ exports.setupAssistant = async (req, res) => {
             isSheet =
               JSON.parse(vision.choices[0].message.content).isTechnicalSheet ===
               true;
-          } else {
-            console.log(
-              `🚫 El archivo no entró a PDF ni a IMAGEN. Revisa el Mimetype.`,
-            );
           }
         } catch (err) {
           console.error(`❌ Error analizando contenido:`, err.message);
@@ -271,13 +274,7 @@ exports.setupAssistant = async (req, res) => {
       }
 
       await openai.beta.vectorStores.del(tempVectorStore.id);
-
-      if (email) {
-        console.log(
-          `📊 RESULTADO FINAL PARA [${file.originalname}]: ${isSheet ? "FICHA TÉCNICA" : "IMAGEN/OTRO"}`,
-        );
-        await updateCounter(tenantId, email, isSheet);
-      }
+      if (email) await updateCounter(tenantId, email, isSheet);
     }
 
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
@@ -324,10 +321,13 @@ exports.analyzeProductImage = async (req, res) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file" });
 
-    // LOG ADICIONAL PARA LA FUNCIÓN INDIVIDUAL
-    console.log(
-      `DEBUG analyzeProductImage: file.mimetype = "${file.mimetype}"`,
-    );
+    let mimeTypeForOpenAI = file.mimetype;
+    if (
+      file.originalname.toLowerCase().endsWith(".pdf") &&
+      file.mimetype === "application/octet-stream"
+    ) {
+      mimeTypeForOpenAI = "application/pdf";
+    }
 
     let result = { isTechnicalSheet: false, name: "Desconocido", price: 0 };
     const nameToTest = file.originalname.toLowerCase();
@@ -339,7 +339,7 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     const isPDF =
-      file.mimetype === "application/pdf" || nameToTest.endsWith(".pdf");
+      mimeTypeForOpenAI === "application/pdf" || nameToTest.endsWith(".pdf");
     const isImage =
       file.mimetype.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
@@ -369,31 +369,34 @@ exports.analyzeProductImage = async (req, res) => {
       result = { ...result, ...JSON.parse(resp.choices[0].message.content) };
     } else if (isPDF) {
       const f = await openai.files.create({
-        file: await OpenAI.toFile(file.buffer, file.originalname),
+        file: await OpenAI.toFile(file.buffer, file.originalname, {
+          type: mimeTypeForOpenAI,
+        }),
         purpose: "assistants",
       });
 
       const vs = await openai.beta.vectorStores.create({
-        name: `Validate-Single-${f.id}`,
+        name: `Val-${f.id}`,
         file_ids: [f.id],
       });
-
       const tempId = await createOpenAIAssistant("Validator").then((a) => a.id);
+
       await openai.beta.assistants.update(tempId, {
         tool_resources: { file_search: { vector_store_ids: [vs.id] } },
       });
 
-      const r = await openai.beta.threads.createAndRunAndPoll({
+      const thread = await openai.beta.threads.create({
+        messages: [
+          {
+            role: "user",
+            content:
+              'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
+          },
+        ],
+      });
+
+      const r = await openai.beta.threads.runs.createAndPoll(thread.id, {
         assistant_id: tempId,
-        thread: {
-          messages: [
-            {
-              role: "user",
-              content:
-                'Extrae JSON: {"isTechnicalSheet": boolean, "name": "string", "price": number}',
-            },
-          ],
-        },
       });
 
       if (r.status === "completed") {
