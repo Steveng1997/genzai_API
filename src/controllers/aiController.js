@@ -109,12 +109,10 @@ exports.askRiley = async (req, res) => {
       const lastAssistantMessage = messagesList.data.find(
         (m) => m.role === "assistant",
       );
-      res
-        .status(200)
-        .json({
-          reply:
-            lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
-        });
+      res.status(200).json({
+        reply:
+          lastAssistantMessage?.content[0]?.text?.value || "Sin respuesta.",
+      });
     } else {
       res.status(500).json({ error: `Status: ${run.status}` });
     }
@@ -136,6 +134,7 @@ exports.setupAssistant = async (req, res) => {
         ExpressionAttributeValues: { ":t": tenantId.toString() },
       }),
     );
+
     let Item = Items?.[0];
     let assistantId =
       Item?.openaiAssistantId ||
@@ -152,21 +151,10 @@ exports.setupAssistant = async (req, res) => {
       newFileIds.push(fileContext.id);
       newFileNames.push(file.originalname);
 
-      // --- LÓGICA DE CLASIFICACIÓN REFORZADA ---
       let isSheet = false;
       const nameToTest = file.originalname.toLowerCase();
 
-      // 1. Hard-check por nombre (Inmediato)
-      const sheetKeywords = [
-        "ficha",
-        "tecnica",
-        "spec",
-        "manual",
-        "actyon",
-        "ssangyong",
-        "kgm",
-        "pdf",
-      ];
+      const sheetKeywords = ["ficha", "tecnica", "spec", "manual"];
       if (sheetKeywords.some((k) => nameToTest.includes(k))) {
         isSheet = true;
       }
@@ -181,7 +169,10 @@ exports.setupAssistant = async (req, res) => {
                 messages: [
                   {
                     role: "user",
-                    content: `Inspecciona este PDF. ¿Tiene tablas técnicas? Responde JSON: {"isTechnicalSheet": boolean}`,
+                    content: `ORDEN CRÍTICA: Abre y lee el archivo "${file.originalname}". 
+                                NO te guíes por el nombre. 
+                                Busca dentro: ¿Hay tablas de torque, potencia, mm, o seguridad?
+                                Responde SOLO este JSON: {"isTechnicalSheet": boolean}`,
                     attachments: [
                       {
                         file_id: fileContext.id,
@@ -192,16 +183,21 @@ exports.setupAssistant = async (req, res) => {
                 ],
               },
             });
+
             if (run.status === "completed") {
               const msgs = await openai.beta.threads.messages.list(
                 run.thread_id,
               );
-              const jsonMatch =
-                msgs.data[0].content[0].text.value.match(/\{.*\}/s);
-              if (jsonMatch)
-                isSheet = JSON.parse(jsonMatch[0]).isTechnicalSheet;
+              const rawText = msgs.data[0].content[0].text.value;
+              // Regex mejorado para capturar JSON incluso con basura alrededor
+              const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                isSheet = result.isTechnicalSheet === true;
+              }
             }
           } else if (file.mimetype.startsWith("image/")) {
+            // Para imágenes usamos GPT-4o Visión
             const vision = await openai.chat.completions.create({
               model: "gpt-4o",
               messages: [
@@ -210,7 +206,7 @@ exports.setupAssistant = async (req, res) => {
                   content: [
                     {
                       type: "text",
-                      text: '¿Es ficha técnica? JSON: {"isTechnicalSheet": boolean}',
+                      text: '¿Esta imagen es una ficha técnica de ingeniería? JSON: {"isTechnicalSheet": boolean}',
                     },
                     {
                       type: "image_url",
@@ -223,16 +219,25 @@ exports.setupAssistant = async (req, res) => {
               ],
               response_format: { type: "json_object" },
             });
-            isSheet = JSON.parse(
-              vision.choices[0].message.content,
-            ).isTechnicalSheet;
+            isSheet =
+              JSON.parse(vision.choices[0].message.content).isTechnicalSheet ===
+              true;
           }
         } catch (err) {
-          console.error("IA falló, manteniendo isSheet como:", isSheet);
+          console.error(
+            `❌ Error analizando ${file.originalname}:`,
+            err.message,
+          );
+          isSheet = false; // Fallback por seguridad
         }
       }
 
-      if (email) await updateCounter(tenantId, email, isSheet);
+      if (email) {
+        console.log(
+          `📊 RESULTADO PARA [${file.originalname}]: ${isSheet ? "FICHA TÉCNICA" : "IMAGEN/OTRO"}`,
+        );
+        await updateCounter(tenantId, email, isSheet);
+      }
     }
 
     const finalFileIds = [...(Item?.openaiFileIds || []), ...newFileIds];
