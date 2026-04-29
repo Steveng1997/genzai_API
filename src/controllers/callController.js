@@ -22,6 +22,7 @@ exports.makeSmartCall = async (req, res) => {
     if (!tenantId)
       return res.status(400).json({ message: "tenantId requerido" });
 
+    // 1. Verificar minutos del usuario
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -35,6 +36,7 @@ exports.makeSmartCall = async (req, res) => {
         .json({ success: false, message: "Sin minutos disponibles" });
     }
 
+    // 2. Obtener configuración de la IA
     const { Items: configs } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CONFIGS,
@@ -56,14 +58,13 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // IMPORTANTE: Aquí vinculamos el Assistant ID de OpenAI
-              assistantId: config.openaiAssistantId,
               messages: [
                 {
                   role: "system",
                   content: `Vinculado a OpenAI Assistant: ${config.openaiAssistantId}. Tienes acceso a file_search para leer fichas técnicas.`,
                 },
               ],
+              tools: [{ type: "file_search" }], // Habilitar búsqueda de archivos en la creación
             },
             voice: {
               provider: "11labs",
@@ -101,6 +102,7 @@ exports.makeSmartCall = async (req, res) => {
       });
     }
 
+    // 3. Obtener leads activos
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -115,6 +117,7 @@ exports.makeSmartCall = async (req, res) => {
         .json({ message: "No hay clientes activos para llamar." });
     }
 
+    // Preparar contexto de tiempo
     const now = new Date();
     const colombiaDate = new Date(
       now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
@@ -129,6 +132,7 @@ exports.makeSmartCall = async (req, res) => {
           ? "Buenas noches"
           : "Buenos días";
 
+    // 4. Ejecutar llamadas
     const callPromises = customers.map(async (customer) => {
       try {
         const rawPhone = customer.phone.toString().replace(/\s+/g, "");
@@ -138,6 +142,7 @@ exports.makeSmartCall = async (req, res) => {
 
         console.log(`📲 Marcando a: ${customer.fullName} (${formattedPhone})`);
 
+        // ESTRUCTURA CORREGIDA: assistantOverrides para inyectar datos dinámicos
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
           assistantId: config.assistantId,
@@ -197,8 +202,6 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // ESTO ES CLAVE: Vincula el cerebro de OpenAI que tiene los archivos
-              assistantId: config.openaiAssistantId,
               messages: [
                 {
                   role: "system",
@@ -253,50 +256,49 @@ exports.makeSmartCall = async (req, res) => {
                   - tenantId: "${tenantId}", clientId: "${customer.clientId}", customerName: "${customer.fullName}", company: "${company}", cita: (Horario calculado y acordado).`,
                 },
               ],
-              // HABILITAMOS FILE SEARCH EN EL OVERRIDE
-              tools: [{ type: "file_search" }],
-            },
-          },
-        };
-
-        // Añadimos la herramienta create_task al payload final
-        vapiPayload.assistantOverrides.model.tools.push({
-          type: "function",
-          messages: [
-            {
-              type: "request-start",
-              content: "Un momento, estoy agendando tu cita...",
-            },
-          ],
-          function: {
-            name: "create_task",
-            description: "Registra una cita o tarea con fecha y hora.",
-            parameters: {
-              type: "object",
-              properties: {
-                titulo: { type: "string" },
-                detalle: { type: "string" },
-                tenantId: { type: "string" },
-                clientId: { type: "string" },
-                customerName: { type: "string" },
-                company: { type: "string" },
-                cita: { type: "string" },
-              },
-              required: [
-                "titulo",
-                "detalle",
-                "tenantId",
-                "clientId",
-                "customerName",
-                "company",
-                "cita",
+              tools: [
+                { type: "file_search" }, // Re-activar herramienta en el override
+                {
+                  type: "function",
+                  messages: [
+                    {
+                      type: "request-start",
+                      content: "Un momento, estoy agendando tu cita...",
+                    },
+                  ],
+                  function: {
+                    name: "create_task",
+                    description: "Registra una cita o tarea con fecha y hora.",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        titulo: { type: "string" },
+                        detalle: { type: "string" },
+                        tenantId: { type: "string" },
+                        clientId: { type: "string" },
+                        customerName: { type: "string" },
+                        company: { type: "string" },
+                        cita: { type: "string" },
+                      },
+                      required: [
+                        "titulo",
+                        "detalle",
+                        "tenantId",
+                        "clientId",
+                        "customerName",
+                        "company",
+                        "cita",
+                      ],
+                    },
+                  },
+                  server: {
+                    url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
+                  },
+                },
               ],
             },
           },
-          server: {
-            url: "https://fn5q3yfyrc.us-east-1.awsapprunner.com/api/vapi/riley-create",
-          },
-        });
+        };
 
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
