@@ -22,7 +22,7 @@ exports.makeSmartCall = async (req, res) => {
     if (!tenantId)
       return res.status(400).json({ message: "tenantId requerido" });
 
-    // 1. Verificar minutos del usuario
+    // 1. Verificar disponibilidad de minutos
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -36,7 +36,7 @@ exports.makeSmartCall = async (req, res) => {
         .json({ success: false, message: "Sin minutos disponibles" });
     }
 
-    // 2. Obtener configuración de la IA
+    // 2. Obtener configuración del agente
     const { Items: configs } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CONFIGS,
@@ -47,9 +47,9 @@ exports.makeSmartCall = async (req, res) => {
 
     let config = configs?.[0];
 
-    // 🤖 LÓGICA DE CREACIÓN/VINCULACIÓN DE ASISTENTE VAPI
+    // 🤖 CREACIÓN AUTOMÁTICA DE ASISTENTE EN VAPI (SI NO EXISTE)
     if (!config?.assistantId && config?.openaiAssistantId) {
-      console.log("🤖 Creando asistente en Vapi automáticamente...");
+      console.log("🤖 Configurando nuevo asistente en Vapi...");
       try {
         const vapiRes = await axios.post(
           "https://api.vapi.ai/assistant",
@@ -61,10 +61,9 @@ exports.makeSmartCall = async (req, res) => {
               messages: [
                 {
                   role: "system",
-                  content: `Vinculado a OpenAI Assistant: ${config.openaiAssistantId}. Tienes acceso a file_search para leer fichas técnicas.`,
+                  content: `Vinculado a OpenAI Assistant: ${config.openaiAssistantId}.`,
                 },
               ],
-              tools: [{ type: "file_search" }], // Habilitar búsqueda de archivos en la creación
             },
             voice: {
               provider: "11labs",
@@ -87,22 +86,22 @@ exports.makeSmartCall = async (req, res) => {
           }),
         );
         config.assistantId = newVapiId;
-        console.log(`✅ Asistente Vapi creado y vinculado: ${newVapiId}`);
+        console.log(`✅ Asistente Vapi vinculado: ${newVapiId}`);
       } catch (vapiErr) {
         console.error(
-          "❌ Error creando asistente en Vapi:",
-          JSON.stringify(vapiErr.response?.data, null, 2),
+          "❌ Error en creación de asistente:",
+          vapiErr.response?.data || vapiErr.message,
         );
       }
     }
 
     if (!config?.assistantId) {
-      return res.status(404).json({
-        message: "Configuración incompleta: falta assistantId en Vapi.",
-      });
+      return res
+        .status(404)
+        .json({ message: "Configuración de Vapi no encontrada." });
     }
 
-    // 3. Obtener leads activos
+    // 3. Obtener clientes con llamadas activas
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -114,10 +113,9 @@ exports.makeSmartCall = async (req, res) => {
     if (!customers || customers.length === 0) {
       return res
         .status(404)
-        .json({ message: "No hay clientes activos para llamar." });
+        .json({ message: "No hay clientes activos para procesar." });
     }
 
-    // Preparar contexto de tiempo
     const now = new Date();
     const colombiaDate = new Date(
       now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
@@ -132,7 +130,7 @@ exports.makeSmartCall = async (req, res) => {
           ? "Buenas noches"
           : "Buenos días";
 
-    // 4. Ejecutar llamadas
+    // 4. Disparar llamadas en paralelo
     const callPromises = customers.map(async (customer) => {
       try {
         const rawPhone = customer.phone.toString().replace(/\s+/g, "");
@@ -140,9 +138,6 @@ exports.makeSmartCall = async (req, res) => {
           ? rawPhone
           : `+57${rawPhone}`;
 
-        console.log(`📲 Marcando a: ${customer.fullName} (${formattedPhone})`);
-
-        // ESTRUCTURA CORREGIDA: assistantOverrides para inyectar datos dinámicos
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
           assistantId: config.assistantId,
@@ -257,13 +252,12 @@ exports.makeSmartCall = async (req, res) => {
                 },
               ],
               tools: [
-                { type: "file_search" }, // Re-activar herramienta en el override
                 {
                   type: "function",
                   messages: [
                     {
                       type: "request-start",
-                      content: "Un momento, estoy agendando tu cita...",
+                      content: "Agendando tu cita, un momento...",
                     },
                   ],
                   function: {
@@ -303,9 +297,7 @@ exports.makeSmartCall = async (req, res) => {
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           vapiPayload,
-          {
-            headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
-          },
+          { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
 
         return response.data;
