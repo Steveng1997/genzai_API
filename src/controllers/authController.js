@@ -4,7 +4,10 @@ const {
   GetCommand,
   UpdateCommand,
   QueryCommand,
+  ScanCommand,
 } = require("@aws-sdk/lib-dynamodb");
+
+const { docClient } = require("../config/awsConfig");
 
 exports.login = async (req, res) => {
   const { email: identifier, password } = req.body;
@@ -142,20 +145,42 @@ exports.getProfile = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
   let { tenantId } = req.query;
-  try {
-    if (!tenantId)
-      return res.status(400).json({ error: "El tenantId es requerido" });
 
+  try {
+    if (!tenantId) {
+      return res.status(400).json({ error: "El tenantId es requerido" });
+    }
+
+    // Usamos ExpressionAttributeNames para evitar cualquier conflicto de nombres
     const command = new ScanCommand({
       TableName: "Users",
       FilterExpression: "tenantId = :t",
-      ExpressionAttributeValues: { ":t": tenantId.trim() },
-      ProjectionExpression: "totalTechnicalSheets, totalProductImages",
+      ExpressionAttributeValues: {
+        ":t": tenantId.trim(),
+      },
+      // Definimos alias para los campos por seguridad
+      ProjectionExpression: "#tts, #tpi",
+      ExpressionAttributeNames: {
+        "#tts": "totalTechnicalSheets",
+        "#tpi": "totalProductImages",
+      },
     });
 
     const response = await docClient.send(command);
+
+    // DEBUG en consola del servidor para que veas qué sale de la DB
+    console.log(
+      `✅ Datos encontrados para tenant ${tenantId}:`,
+      response.Items,
+    );
+
     res.status(200).json(response.Items || []);
   } catch (error) {
-    res.status(500).json({ error: "Error al obtener contadores" });
+    // IMPORTANTE: Cambia esto momentáneamente para ver el error real en Flutter
+    console.error("❌ Error en Scan de DynamoDB:", error);
+    res.status(500).json({
+      error: "Error al obtener contadores",
+      details: error.message, // Esto te dirá exactamente qué falló
+    });
   }
 };
