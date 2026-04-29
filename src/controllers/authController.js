@@ -7,8 +7,6 @@ const {
   ScanCommand,
 } = require("@aws-sdk/lib-dynamodb");
 
-const { docClient } = require("../config/awsConfig");
-
 exports.login = async (req, res) => {
   const { email: identifier, password } = req.body;
   if (!identifier) {
@@ -166,7 +164,7 @@ exports.getAllUsers = async (req, res) => {
       },
     });
 
-    const response = await docClient.send(command);
+    const response = await dynamoDB.send(command);
 
     // DEBUG en consola del servidor para que veas qué sale de la DB
     console.log(
