@@ -139,3 +139,20 @@ exports.getProfile = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+exports.getAllUsers = async (req, res) => {
+  let { tenantId } = req.query;
+  try {
+    if (!tenantId)
+      return res.status(400).json({ error: "El tenantId es requerido" });
+    const command = new ScanCommand({
+      TableName: "Users",
+      FilterExpression: "tenantId = :t",
+      ExpressionAttributeValues: { ":t": tenantId.trim() },
+    });
+    const response = await docClient.send(command);
+    res.status(200).json(response.Items || []);
+  } catch (error) {
+    res.status(500).json({ error: "Error al obtener clientes" });
+  }
+};
