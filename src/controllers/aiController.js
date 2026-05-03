@@ -362,17 +362,20 @@ exports.analyzeProductImage = async (req, res) => {
       mimeTypeForOpenAI = "application/pdf";
     }
 
-    const nameToTest = file.originalname.toLowerCase();
+    const fileName = file.originalname.toLowerCase();
     const isPDF =
-      mimeTypeForOpenAI === "application/pdf" || nameToTest.endsWith(".pdf");
+      file.mimetype === "application/pdf" || fileName.endsWith(".pdf");
     const isImage =
       file.mimetype.startsWith("image/") ||
-      /\.(jpg|jpeg|png|webp)$/.test(nameToTest);
+      /\.(jpg|jpeg|png|webp)$/.test(fileName);
 
     const extractionPrompt = `
-      Analiza este archivo y extrae un JSON con este formato exacto:
+      Analiza el archivo adjunto y extrae la información técnica. 
+      Tu respuesta debe ser exclusivamente un objeto JSON válido, sin bloques de código Markdown ni texto adicional.
+
+      Formato JSON requerido:
       {
-        "isTechnicalSheet": boolean (true si es ficha técnica con medidas/specs, false si es solo foto),
+        "isTechnicalSheet": boolean, // true si contiene especificaciones técnicas, dimensiones o capacidades.
         "name": "string",
         "price": number,
         "brand": "string",
@@ -385,12 +388,17 @@ exports.analyzeProductImage = async (req, res) => {
         "colors": "string",
         "observations": "string"
       }
-      Si no encuentras un valor, usa "N/A" para texto o 0 para números.
+
+      Reglas críticas:
+      1. Si un campo de texto no está presente, usa "N/A".
+      2. No inventes datos; si no estás seguro de un valor, usa el valor por defecto (0 o "N/A").
+      3. Asegúrate de que el JSON sea válido y se pueda parsear directamente.
     `;
 
     let result = { isTechnicalSheet: false };
 
     if (isImage) {
+      const base64Image = file.buffer.toString("base64");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -401,7 +409,7 @@ exports.analyzeProductImage = async (req, res) => {
               {
                 type: "image_url",
                 image_url: {
-                  url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`,
+                  url: `data:${file.mimetype};base64,${base64Image}`,
                 },
               },
             ],

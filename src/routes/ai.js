@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const storage = multer.memoryStorage();
 const multer = require("multer");
 const aiController = require("../controllers/aiController");
 
