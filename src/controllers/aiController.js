@@ -370,30 +370,27 @@ exports.analyzeProductImage = async (req, res) => {
       /\.(jpg|jpeg|png|webp)$/.test(fileName);
 
     const extractionPrompt = `
-    Analiza el archivo adjunto y actúa como un gestor de inventario experto. 
-    Tu misión es construir un registro coherente deduciendo la información incluso si no hay etiquetas explícitas.
-    
-    ### LÓGICA DE CLASIFICACIÓN:
-    1. **category**: Sector industrial (ej. "Automotriz", "Moda", "Alimentos", "Joyería").
-    
-    2. **productType**: El objeto específico dentro de la categoría (ej. "SUV", "Camiseta", "Lácteo", "Anillo").
-    
-    3. **model**: 
-      - Autos: Año de fabricación (ej. "2026").
-      - Moda/Joyería: Temporada o colección (ej. "2025" o "Summer").
-      - Alimentos: Presentación o peso (ej. "150g").
+    Analiza el archivo adjunto y determina si es una ficha técnica de producto.
+  
+    ### REGLAS DE VALIDACIÓN:
+    - **isTechnicalSheet**: Será true si el documento contiene especificaciones detalladas (medidas, motor, materiales, componentes técnicos). Será false si es solo una foto publicitaria o texto genérico.
 
-    ### LÓGICA DE CAMPOS DINÁMICOS:
-    - **name**: [brand] + [reference] + [model]. Ej: "Alpina Yogurt Griego 150g".
-    - **description**: 2-3 líneas resaltando lo técnico o comercial.
-    - **observations**: Seguridad/garantía (autos), cuidados (ropa), o alérgenos (comida).
-    - **colors**: Tonos comerciales (ej. "Verde Bosque"). **SI ES COMIDA O RESTAURANTE, USA "N/A"**.
+    ### LÓGICA DE CLASIFICACIÓN:
+    1. **category**: Sector (ej. "Automotriz", "Moda", "Alimentos").
+    2. **productType**: El objeto específico (ej. "SUV", "Camiseta", "Reloj").
+    3. **model**: Año (autos), Colección (ropa) o Gramaje (comida).
+
+    ### LÓGICA DE CAMPOS (Mapeo exacto a Base de Datos):
+    - **name**: [brand] + [reference] + [model].
+    - **description**: Resumen técnico comercial de 2-3 líneas.
+    - **observations**: Detalles de seguridad, garantía, cuidados o alérgenos.
+    - **color**: Tonos comerciales (ej. "Gris Platino"). **Si es comida/restaurante usa "N/A"**.
 
     ### REGLAS DE NEGOCIO:
     - **SI ES AUTOMOTRIZ**: Llena 'additionalVehicleData' con segmento y combustible.
-    - **DEDUCCIÓN**: Si ves un logo pero no el texto, asigna la marca. Si ves un año, asígnalo al modelo.
+    - **DEDUCCIÓN**: Usa logos para identificar la marca si no hay texto.
 
-    ### Formato JSON Requerido (RESPONDE SOLO ESTO):
+    ### Formato JSON Requerido:
     {
       "isTechnicalSheet": boolean,
       "category": "string", 
@@ -404,7 +401,7 @@ exports.analyzeProductImage = async (req, res) => {
       "model": "string",
       "price": number,
       "stock": number,
-      "colors": "string",
+      "color": "string",
       "description": "string",
       "observations": "string",
       "additionalVehicleData": {
@@ -414,9 +411,9 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     ### INSTRUCCIONES CRÍTICAS:
-    - No inventes datos. Si no hay forma de deducirlo, usa "N/A" o 0.
-    - Devuelve exclusivamente el JSON puro sin bloques de código Markdown.
-    `;
+    - Responde ÚNICAMENTE el JSON.
+    - No uses "N/A" si la información se puede deducir del contexto visual.
+  `;
 
     let result = { isTechnicalSheet: false };
 
