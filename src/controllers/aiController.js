@@ -375,7 +375,7 @@ exports.analyzeProductImage = async (req, res) => {
 
       Formato JSON requerido:
       {
-        "isTechnicalSheet": boolean, // true si contiene especificaciones técnicas, dimensiones o capacidades.
+        "isTechnicalSheet": boolean,
         "name": "string",
         "price": number,
         "brand": "string",

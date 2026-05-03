@@ -1,6 +1,5 @@
 const express = require("express");
 const router = express.Router();
-const storage = multer.memoryStorage();
 const multer = require("multer");
 const aiController = require("../controllers/aiController");
 
@@ -9,7 +8,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 50 * 1024 * 1024,
+    fileSize: 50 * 1024 * 1024, // 50MB
     files: 10,
   },
 });
