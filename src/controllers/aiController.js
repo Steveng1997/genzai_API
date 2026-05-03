@@ -370,25 +370,27 @@ exports.analyzeProductImage = async (req, res) => {
       /\.(jpg|jpeg|png|webp)$/.test(fileName);
 
     const extractionPrompt = `
-    Analiza el archivo adjunto y determina si es una ficha técnica de producto.
+    Analiza el archivo adjunto y genera un objeto JSON detallado.
   
-    ### REGLAS DE VALIDACIÓN:
-    - **isTechnicalSheet**: Será true si el documento contiene especificaciones detalladas (medidas, motor, materiales, componentes técnicos). Será false si es solo una foto publicitaria o texto genérico.
+    ### REGLA CRÍTICA DE VALIDACIÓN:
+    - **isTechnicalSheet**: DEBE SER true si el documento contiene tablas, especificaciones numéricas de ingeniería, medidas exactas, detalles de motor o materiales. 
+    - Ejemplo TRUE: Ficha de vehículo con torque, etiquetas de composición textil, tablas nutricionales.
+    - Ejemplo FALSE: Fotos publicitarias sin texto técnico, logotipos, menús de restaurante sin gramaje.
 
     ### LÓGICA DE CLASIFICACIÓN:
-    1. **category**: Sector (ej. "Automotriz", "Moda", "Alimentos").
+    1. **category**: Sector industrial (ej. "Automotriz", "Moda", "Alimentos").
     2. **productType**: El objeto específico (ej. "SUV", "Camiseta", "Reloj").
-    3. **model**: Año (autos), Colección (ropa) o Gramaje (comida).
+    3. **model**: Año (autos), Colección (ropa) o Peso/Presentación (comida).
 
     ### LÓGICA DE CAMPOS (Mapeo exacto a Base de Datos):
     - **name**: [brand] + [reference] + [model].
-    - **description**: Resumen técnico comercial de 2-3 líneas.
+    - **description**: Resumen técnico-comercial de 2-3 líneas.
     - **observations**: Detalles de seguridad, garantía, cuidados o alérgenos.
     - **color**: Tonos comerciales (ej. "Gris Platino"). **Si es comida/restaurante usa "N/A"**.
 
     ### REGLAS DE NEGOCIO:
     - **SI ES AUTOMOTRIZ**: Llena 'additionalVehicleData' con segmento y combustible.
-    - **DEDUCCIÓN**: Usa logos para identificar la marca si no hay texto.
+    - **DEDUCCIÓN**: Usa logos para identificar la marca si el texto no es explícito.
 
     ### Formato JSON Requerido:
     {
@@ -410,9 +412,9 @@ exports.analyzeProductImage = async (req, res) => {
       }
     }
 
-    ### INSTRUCCIONES CRÍTICAS:
-    - Responde ÚNICAMENTE el JSON.
-    - No uses "N/A" si la información se puede deducir del contexto visual.
+    ### INSTRUCCIONES DE SALIDA:
+    - Responde ÚNICAMENTE el JSON puro.
+    - No uses "N/A" si la información se puede deducir visualmente.
   `;
 
     let result = { isTechnicalSheet: false };
@@ -453,7 +455,8 @@ exports.analyzeProductImage = async (req, res) => {
 
       const tempAssistant = await openai.beta.assistants.create({
         name: "Extractor Temporal",
-        instructions: "Extrae datos de productos en formato JSON.",
+        instructions:
+          "Eres un experto en análisis de documentos técnicos. Tu objetivo es identificar fichas técnicas (isTechnicalSheet) y extraer sus datos en formato JSON siguiendo estrictamente el esquema proporcionado.",
         model: "gpt-4o",
         tools: [{ type: "file_search" }],
         tool_resources: { file_search: { vector_store_ids: [vs.id] } },
@@ -470,7 +473,9 @@ exports.analyzeProductImage = async (req, res) => {
       if (run.status === "completed") {
         const msgs = await openai.beta.threads.messages.list(run.thread_id);
         const match = msgs.data[0].content[0].text.value.match(/\{[\s\S]*\}/);
-        if (match) result = JSON.parse(match[0]);
+        if (match) {
+          result = JSON.parse(match[0]);
+        }
       }
 
       await openai.files.del(f.id);
