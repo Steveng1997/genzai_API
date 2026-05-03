@@ -484,7 +484,9 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     if (email) {
-      await updateCounter(tenantId, email, result.isTechnicalSheet);
+      const isTech = String(result.isTechnicalSheet).toLowerCase() === "true";
+      await updateCounter(tenantId, email, isTech);
+      result.isTechnicalSheet = isTech;
     }
 
     res.status(200).json(result);
