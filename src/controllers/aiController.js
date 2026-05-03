@@ -370,29 +370,52 @@ exports.analyzeProductImage = async (req, res) => {
       /\.(jpg|jpeg|png|webp)$/.test(fileName);
 
     const extractionPrompt = `
-      Analiza el archivo adjunto y extrae la información técnica. 
-      Tu respuesta debe ser exclusivamente un objeto JSON válido, sin bloques de código Markdown ni texto adicional.
+    Analiza el archivo adjunto y actúa como un gestor de inventario experto. 
+    Tu misión es construir un registro coherente deduciendo la información incluso si no hay etiquetas explícitas.
+    
+    ### LÓGICA DE CLASIFICACIÓN:
+    1. **category**: Sector industrial (ej. "Automotriz", "Moda", "Alimentos", "Joyería").
+    
+    2. **productType**: El objeto específico dentro de la categoría (ej. "SUV", "Camiseta", "Lácteo", "Anillo").
+    
+    3. **model**: 
+      - Autos: Año de fabricación (ej. "2026").
+      - Moda/Joyería: Temporada o colección (ej. "2025" o "Summer").
+      - Alimentos: Presentación o peso (ej. "150g").
 
-      Formato JSON requerido:
-      {
-        "isTechnicalSheet": boolean,
-        "name": "string",
-        "price": number,
-        "brand": "string",
-        "model": "string",
-        "reference": "string",
-        "stock": number,
-        "description": "string",
-        "category": "string",
-        "productType": "string",
-        "colors": "string",
-        "observations": "string"
+    ### LÓGICA DE CAMPOS DINÁMICOS:
+    - **name**: [brand] + [reference] + [model]. Ej: "Alpina Yogurt Griego 150g".
+    - **description**: 2-3 líneas resaltando lo técnico o comercial.
+    - **observations**: Seguridad/garantía (autos), cuidados (ropa), o alérgenos (comida).
+    - **colors**: Tonos comerciales (ej. "Verde Bosque"). **SI ES COMIDA O RESTAURANTE, USA "N/A"**.
+
+    ### REGLAS DE NEGOCIO:
+    - **SI ES AUTOMOTRIZ**: Llena 'additionalVehicleData' con segmento y combustible.
+    - **DEDUCCIÓN**: Si ves un logo pero no el texto, asigna la marca. Si ves un año, asígnalo al modelo.
+
+    ### Formato JSON Requerido (RESPONDE SOLO ESTO):
+    {
+      "isTechnicalSheet": boolean,
+      "category": "string", 
+      "productType": "string",
+      "name": "string",
+      "brand": "string",
+      "reference": "string",
+      "model": "string",
+      "price": number,
+      "stock": number,
+      "colors": "string",
+      "description": "string",
+      "observations": "string",
+      "additionalVehicleData": {
+        "segment": "string",
+        "fuelType": "string"
       }
+    }
 
-      Reglas críticas:
-      1. Si un campo de texto no está presente, usa "N/A".
-      2. No inventes datos; si no estás seguro de un valor, usa el valor por defecto (0 o "N/A").
-      3. Asegúrate de que el JSON sea válido y se pueda parsear directamente.
+    ### INSTRUCCIONES CRÍTICAS:
+    - No inventes datos. Si no hay forma de deducirlo, usa "N/A" o 0.
+    - Devuelve exclusivamente el JSON puro sin bloques de código Markdown.
     `;
 
     let result = { isTechnicalSheet: false };
