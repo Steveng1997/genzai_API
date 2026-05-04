@@ -372,11 +372,16 @@ exports.analyzeProductImage = async (req, res) => {
 
     const extractionPrompt = `
     Analiza el archivo adjunto y extrae la información para un inventario profesional.
+
+    ### REGLAS CRÍTICAS PARA "name":
+    - NO uses "N/A", "Desconocido" o "Modelo específico" dentro del nombre.
+    - Si no encuentras la referencia o el modelo, NO los inventes, simplemente usa los datos disponibles.
+    - Formato preferido: "[Marca] [Referencia/Modelo]".
     
     ### COLUMNAS A LLENAR (Obligatorio):
     1. brand: Marca del producto.
     2. reference: Referencia de fábrica o código alfanumérico.
-    3. name: Nombre completo siguiendo el formato "[brand] [reference] [model]".
+    3. name: Nombre comercial más descriptivo encontrado.
     4. productType: Tipo específico (ej: Camioneta, Zapatos, Smartphone).
     5. category: Sector (ej: Automotriz, Calzado, Tecnología).
     6. color: Color exacto mencionado. Si es comida o no aplica, usa "N/A".
@@ -508,10 +513,23 @@ exports.analyzeProductImage = async (req, res) => {
       await updateCounter(tenantId, email, isTech);
     }
 
+    let finalName = result.name || "";
+
+    finalName = finalName
+      .replace(/N\/A/g, "")
+      .replace(/Modelo específico/gi, "")
+      .replace(/Modelo especifico/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (finalName.length < 3) {
+      finalName = `${result.brand || ""} ${result.reference || ""}`.trim();
+    }
+
     const finalResponse = {
       brand: result.brand || "",
       reference: result.reference || "",
-      name: result.name || "",
+      name: finalName,
       productType: result.productType || "",
       category: result.category || "",
       color: result.color || "N/A",
