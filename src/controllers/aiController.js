@@ -340,6 +340,12 @@ exports.analyzeProductImage = async (req, res) => {
     const { tenantId, email } = req.body;
     const file = req.file;
 
+    const ACTUAL_BUCKET = process.env.S3_BUCKET_NAME || BUCKET_NAME;
+
+    if (!ACTUAL_BUCKET) {
+      throw new Error("S3 Bucket name is missing in environment variables");
+    }
+
     if (!file)
       return res.status(400).json({ error: "No se recibió ningún archivo" });
 
@@ -439,33 +445,34 @@ exports.analyzeProductImage = async (req, res) => {
               Math.round((result.crop.y / 1000) * metadata.height),
             ),
             width: Math.min(
-              metadata.width,
+              metadata.width - 1,
               Math.round((result.crop.width / 1000) * metadata.width),
             ),
             height: Math.min(
-              metadata.height,
+              metadata.height - 1,
               Math.round((result.crop.height / 1000) * metadata.height),
             ),
           };
 
-          const croppedBuffer = await sharp(file.buffer)
-            .extract(extractRegion)
-            .jpeg({ quality: 90 })
-            .toBuffer();
+          if (extractRegion.width > 0 && extractRegion.height > 0) {
+            const croppedBuffer = await sharp(file.buffer)
+              .extract(extractRegion)
+              .jpeg({ quality: 90 })
+              .toBuffer();
 
-          const fileKey = `products/${tenantId.trim()}/crop-${Date.now()}-${crypto.randomUUID()}.jpg`;
+            const fileKey = `products/${tenantId.trim()}/crop-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
-          await s3Client.send(
-            new PutObjectCommand({
-              Bucket: process.env.S3_BUCKET_NAME,
-              Key: fileKey,
-              Body: croppedBuffer,
-              ContentType: "image/jpeg",
-            }),
-          );
-
-          primaryPhotoUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
-          console.log("✅ Imagen guardada en S3:", primaryPhotoUrl);
+            await s3Client.send(
+              new PutObjectCommand({
+                Bucket: ACTUAL_BUCKET,
+                Key: fileKey,
+                Body: croppedBuffer,
+                ContentType: "image/jpeg",
+              }),
+            );
+            primaryPhotoUrl = `https://${ACTUAL_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+            console.log("✅ Imagen guardada en S3:", primaryPhotoUrl);
+          }
         } catch (sharpError) {
           console.error("⚠️ Error procesando imagen/S3:", sharpError.message);
         }
