@@ -390,11 +390,9 @@ exports.analyzeProductImage = async (req, res) => {
     9. segment: (Solo autos) Segmento (ej: SUV, Sedán, Hatchback). Si no es auto, usa "".
     10. fuelType: (Solo autos) Combustible (ej: Gasolina, Diésel, Eléctrico). Si no es auto, usa "".
     
-    ### RECORTE DE IMAGEN (Solo si es imagen):
-    Identifica el área donde se encuentra la foto principal del producto. 
-    Devuelve las coordenadas en un objeto "crop" con valores de 0 a 1000:
-    "crop": {"x": inicio_x, "y": inicio_y, "width": ancho, "height": alto}
-
+    ### RECORTE (Solo imágenes):
+    Si hay una foto principal, devuelve coordenadas en "crop": {"x", "y", "width", "height"} (0-1000).
+    
     ### REGLA DE VALIDACIÓN PARA isTechnicalSheet:
     - isTechnicalSheet: Debe ser TRUE si el documento contiene tablas técnicas, medidas, especificaciones de ingeniería o componentes detallados. FALSE si es solo publicidad visual.
 
@@ -424,33 +422,53 @@ exports.analyzeProductImage = async (req, res) => {
         ],
         response_format: { type: "json_object" },
       });
+
       result = JSON.parse(resp.choices[0].message.content);
 
       if (result.crop) {
-        const metadata = await sharp(file.buffer).metadata();
+        try {
+          const metadata = await sharp(file.buffer).metadata();
 
-        const extractRegion = {
-          left: Math.round((result.crop.x / 1000) * metadata.width),
-          top: Math.round((result.crop.y / 1000) * metadata.height),
-          width: Math.round((result.crop.width / 1000) * metadata.width),
-          height: Math.round((result.crop.height / 1000) * metadata.height),
-        };
+          const extractRegion = {
+            left: Math.max(
+              0,
+              Math.round((result.crop.x / 1000) * metadata.width),
+            ),
+            top: Math.max(
+              0,
+              Math.round((result.crop.y / 1000) * metadata.height),
+            ),
+            width: Math.min(
+              metadata.width,
+              Math.round((result.crop.width / 1000) * metadata.width),
+            ),
+            height: Math.min(
+              metadata.height,
+              Math.round((result.crop.height / 1000) * metadata.height),
+            ),
+          };
 
-        const croppedBuffer = await sharp(file.buffer)
-          .extract(extractRegion)
-          .toBuffer();
+          const croppedBuffer = await sharp(file.buffer)
+            .extract(extractRegion)
+            .jpeg({ quality: 90 })
+            .toBuffer();
 
-        const fileKey = `products/${tenantId.trim()}/crop-${crypto.randomUUID()}.jpg`;
-        primaryPhotoUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+          const fileKey = `products/${tenantId.trim()}/crop-${Date.now()}-${crypto.randomUUID()}.jpg`;
 
-        await s3Client.send(
-          new PutObjectCommand({
-            Bucket: process.env.S3_BUCKET_NAME,
-            Key: fileKey,
-            Body: croppedBuffer,
-            ContentType: "image/jpeg",
-          }),
-        );
+          await s3Client.send(
+            new PutObjectCommand({
+              Bucket: process.env.S3_BUCKET_NAME,
+              Key: fileKey,
+              Body: croppedBuffer,
+              ContentType: "image/jpeg",
+            }),
+          );
+
+          primaryPhotoUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+          console.log("✅ Imagen guardada en S3:", primaryPhotoUrl);
+        } catch (sharpError) {
+          console.error("⚠️ Error procesando imagen/S3:", sharpError.message);
+        }
       }
     } else if (isPDF) {
       const f = await openai.files.create({
@@ -506,15 +524,7 @@ exports.analyzeProductImage = async (req, res) => {
       result.isTechnicalSheet = true;
     }
 
-    const isTech = String(result.isTechnicalSheet).toLowerCase() === "true";
-    result.isTechnicalSheet = isTech;
-
-    if (email) {
-      await updateCounter(tenantId, email, isTech);
-    }
-
     let finalName = result.name || "";
-
     finalName = finalName
       .replace(/N\/A/g, "")
       .replace(/Modelo específico/gi, "")
@@ -526,7 +536,14 @@ exports.analyzeProductImage = async (req, res) => {
       finalName = `${result.brand || ""} ${result.reference || ""}`.trim();
     }
 
-    const finalResponse = {
+    const isTech = String(result.isTechnicalSheet).toLowerCase() === "true";
+    result.isTechnicalSheet = isTech;
+
+    if (email) {
+      await updateCounter(tenantId, email, isTech);
+    }
+
+    res.status(200).json({
       brand: result.brand || "",
       reference: result.reference || "",
       name: finalName,
@@ -539,11 +556,9 @@ exports.analyzeProductImage = async (req, res) => {
       fuelType: result.fuelType || "",
       isTechnicalSheet: isTech,
       primaryPhotoUrl: primaryPhotoUrl,
-    };
-
-    res.status(200).json(finalResponse);
+    });
   } catch (e) {
-    console.error("❌ Error:", e.message);
+    console.error("❌ Error General:", e.message);
     res.status(500).json({ error: "Error procesando el análisis" });
   }
 };
