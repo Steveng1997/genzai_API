@@ -3,6 +3,10 @@ const { v4: uuidv4 } = require("uuid");
 const { UpdateCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
+const sharp = require("sharp");
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const crypto = require("crypto");
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
@@ -380,6 +384,11 @@ exports.analyzeProductImage = async (req, res) => {
     8. observations: Detalles de seguridad, garantía o mantenimiento.
     9. segment: (Solo autos) Segmento (ej: SUV, Sedán, Hatchback). Si no es auto, usa "".
     10. fuelType: (Solo autos) Combustible (ej: Gasolina, Diésel, Eléctrico). Si no es auto, usa "".
+    
+    ### RECORTE DE IMAGEN (Solo si es imagen):
+    Identifica el área donde se encuentra la foto principal del producto. 
+    Devuelve las coordenadas en un objeto "crop" con valores de 0 a 1000:
+    "crop": {"x": inicio_x, "y": inicio_y, "width": ancho, "height": alto}
 
     ### REGLA DE VALIDACIÓN PARA isTechnicalSheet:
     - isTechnicalSheet: Debe ser TRUE si el documento contiene tablas técnicas, medidas, especificaciones de ingeniería o componentes detallados. FALSE si es solo publicidad visual.
@@ -388,6 +397,7 @@ exports.analyzeProductImage = async (req, res) => {
     `;
 
     let result = { isTechnicalSheet: isSheetByKeyword };
+    let primaryPhotoUrl = "";
 
     if (isImage) {
       const base64Image = file.buffer.toString("base64");
@@ -410,6 +420,33 @@ exports.analyzeProductImage = async (req, res) => {
         response_format: { type: "json_object" },
       });
       result = JSON.parse(resp.choices[0].message.content);
+
+      if (result.crop) {
+        const metadata = await sharp(file.buffer).metadata();
+
+        const extractRegion = {
+          left: Math.round((result.crop.x / 1000) * metadata.width),
+          top: Math.round((result.crop.y / 1000) * metadata.height),
+          width: Math.round((result.crop.width / 1000) * metadata.width),
+          height: Math.round((result.crop.height / 1000) * metadata.height),
+        };
+
+        const croppedBuffer = await sharp(file.buffer)
+          .extract(extractRegion)
+          .toBuffer();
+
+        const fileKey = `products/${tenantId.trim()}/crop-${crypto.randomUUID()}.jpg`;
+        primaryPhotoUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+
+        await s3Client.send(
+          new PutObjectCommand({
+            Bucket: process.env.S3_BUCKET_NAME,
+            Key: fileKey,
+            Body: croppedBuffer,
+            ContentType: "image/jpeg",
+          }),
+        );
+      }
     } else if (isPDF) {
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
@@ -483,11 +520,12 @@ exports.analyzeProductImage = async (req, res) => {
       segment: result.segment || "",
       fuelType: result.fuelType || "",
       isTechnicalSheet: isTech,
+      primaryPhotoUrl: primaryPhotoUrl,
     };
 
     res.status(200).json(finalResponse);
   } catch (e) {
-    console.error("❌ Error en analyzeProductImage:", e.message);
-    res.status(500).json({ error: "Error procesando el análisis de la IA" });
+    console.error("❌ Error:", e.message);
+    res.status(500).json({ error: "Error procesando el análisis" });
   }
 };
