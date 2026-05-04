@@ -7,9 +7,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
-/**
- * Actualiza los contadores de uso en DynamoDB
- */
 const updateCounter = async (tenantId, email, isTechnicalSheet) => {
   const isSheet =
     isTechnicalSheet === true ||
@@ -37,9 +34,6 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
   }
 };
 
-/**
- * Crea un asistente clasificador por defecto
- */
 const createOpenAIAssistant = async (company) => {
   return await openai.beta.assistants.create({
     name: `Riley - Clasificador - ${company || "Empresa"}`,
@@ -52,13 +46,10 @@ const createOpenAIAssistant = async (company) => {
   });
 };
 
-// --- NUEVO MÉTODO: TRAER HISTORIAL DE OPENAI ---
-
 exports.getChatHistory = async (req, res) => {
   const { tenantId } = req.params;
 
   try {
-    // 1. Buscamos el threadId activo en DynamoDB para ese tenant
     const { Items } = await dynamoDB.send(
       new ScanCommand({
         TableName: TABLE_CONFIGS,
@@ -74,16 +65,14 @@ exports.getChatHistory = async (req, res) => {
       return res.status(200).json([]);
     }
 
-    // 2. Recuperamos los mensajes desde OpenAI
     const messages = await openai.beta.threads.messages.list(threadId);
 
-    // 3. Formateamos para que Flutter lo reciba limpio
     const history = messages.data
       .map((m) => ({
         role: m.role,
         content: m.content[0]?.text?.value || "",
       }))
-      .reverse(); // reverse para que el orden sea cronológico
+      .reverse();
 
     res.status(200).json(history);
   } catch (e) {
@@ -91,8 +80,6 @@ exports.getChatHistory = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
-
-// --- MÉTODOS DE CONFIGURACIÓN Y CHAT ---
 
 exports.getConfig = async (req, res) => {
   const { tenantId } = req.params;
@@ -167,8 +154,6 @@ exports.askRiley = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
-
-// --- MÉTODOS DE PROCESAMIENTO DE ARCHIVOS ---
 
 exports.setupAssistant = async (req, res) => {
   const files = req.files || [];
@@ -354,70 +339,55 @@ exports.analyzeProductImage = async (req, res) => {
     if (!file)
       return res.status(400).json({ error: "No se recibió ningún archivo" });
 
+    const fileName = file.originalname.toLowerCase();
     let mimeTypeForOpenAI = file.mimetype;
+
     if (
-      file.originalname.toLowerCase().endsWith(".pdf") &&
-      file.mimetype === "application/octet-stream"
+      fileName.endsWith(".pdf") &&
+      mimeTypeForOpenAI === "application/octet-stream"
     ) {
       mimeTypeForOpenAI = "application/pdf";
     }
 
-    const fileName = file.originalname.toLowerCase();
     const isPDF =
-      file.mimetype === "application/pdf" || fileName.endsWith(".pdf");
+      mimeTypeForOpenAI === "application/pdf" || fileName.endsWith(".pdf");
     const isImage =
-      file.mimetype.startsWith("image/") ||
+      mimeTypeForOpenAI.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(fileName);
 
+    const sheetKeywords = [
+      "ficha",
+      "tecnica",
+      "spec",
+      "manual",
+      "datos",
+      "catalog",
+      "hoja",
+    ];
+    const isSheetByKeyword = sheetKeywords.some((k) => fileName.includes(k));
+
     const extractionPrompt = `
-    Analiza el archivo adjunto y genera un objeto JSON detallado.
-  
-    ### REGLA CRÍTICA DE VALIDACIÓN:
-    - **isTechnicalSheet**: DEBE SER true si el documento contiene tablas, especificaciones numéricas de ingeniería, medidas exactas, detalles de motor o materiales. 
-    - Ejemplo TRUE: Ficha de vehículo con torque, etiquetas de composición textil, tablas nutricionales.
-    - Ejemplo FALSE: Fotos publicitarias sin texto técnico, logotipos, menús de restaurante sin gramaje.
+    Analiza el archivo adjunto y extrae la información para un inventario profesional.
+    
+    ### COLUMNAS A LLENAR (Obligatorio):
+    1. brand: Marca del producto.
+    2. reference: Referencia de fábrica o código alfanumérico.
+    3. name: Nombre completo siguiendo el formato "[brand] [reference] [model]".
+    4. productType: Tipo específico (ej: Camioneta, Zapatos, Smartphone).
+    5. category: Sector (ej: Automotriz, Calzado, Tecnología).
+    6. color: Color exacto mencionado. Si es comida o no aplica, usa "N/A".
+    7. description: Resumen de características clave (2-3 líneas).
+    8. observations: Detalles de seguridad, garantía o mantenimiento.
+    9. segment: (Solo autos) Segmento (ej: SUV, Sedán, Hatchback). Si no es auto, usa "".
+    10. fuelType: (Solo autos) Combustible (ej: Gasolina, Diésel, Eléctrico). Si no es auto, usa "".
 
-    ### LÓGICA DE CLASIFICACIÓN:
-    1. **category**: Sector industrial (ej. "Automotriz", "Moda", "Alimentos").
-    2. **productType**: El objeto específico (ej. "SUV", "Camiseta", "Reloj").
-    3. **model**: Año (autos), Colección (ropa) o Peso/Presentación (comida).
+    ### REGLA DE VALIDACIÓN PARA isTechnicalSheet:
+    - isTechnicalSheet: Debe ser TRUE si el documento contiene tablas técnicas, medidas, especificaciones de ingeniería o componentes detallados. FALSE si es solo publicidad visual.
 
-    ### LÓGICA DE CAMPOS (Mapeo exacto a Base de Datos):
-    - **name**: [brand] + [reference] + [model].
-    - **description**: Resumen técnico-comercial de 2-3 líneas.
-    - **observations**: Detalles de seguridad, garantía, cuidados o alérgenos.
-    - **color**: Tonos comerciales (ej. "Gris Platino"). **Si es comida/restaurante usa "N/A"**.
+    Responde ÚNICAMENTE en formato JSON plano.
+    `;
 
-    ### REGLAS DE NEGOCIO:
-    - **SI ES AUTOMOTRIZ**: Llena 'additionalVehicleData' con segmento y combustible.
-    - **DEDUCCIÓN**: Usa logos para identificar la marca si el texto no es explícito.
-
-    ### Formato JSON Requerido:
-    {
-      "isTechnicalSheet": boolean,
-      "category": "string", 
-      "productType": "string",
-      "name": "string",
-      "brand": "string",
-      "reference": "string",
-      "model": "string",
-      "price": number,
-      "stock": number,
-      "color": "string",
-      "description": "string",
-      "observations": "string",
-      "additionalVehicleData": {
-        "segment": "string",
-        "fuelType": "string"
-      }
-    }
-
-    ### INSTRUCCIONES DE SALIDA:
-    - Responde ÚNICAMENTE el JSON puro.
-    - No uses "N/A" si la información se puede deducir visualmente.
-  `;
-
-    let result = { isTechnicalSheet: false };
+    let result = { isTechnicalSheet: isSheetByKeyword };
 
     if (isImage) {
       const base64Image = file.buffer.toString("base64");
@@ -454,16 +424,22 @@ exports.analyzeProductImage = async (req, res) => {
       });
 
       const tempAssistant = await openai.beta.assistants.create({
-        name: "Extractor Temporal",
+        name: "Data Extractor",
         instructions:
-          "Eres un experto en análisis de documentos técnicos. Tu objetivo es identificar fichas técnicas (isTechnicalSheet) y extraer sus datos en formato JSON siguiendo estrictamente el esquema proporcionado.",
+          "Eres un analista técnico. Extrae datos precisos de documentos y devuélvelos en JSON. Si el documento tiene tablas, extrae cada detalle técnico.",
         model: "gpt-4o",
         tools: [{ type: "file_search" }],
         tool_resources: { file_search: { vector_store_ids: [vs.id] } },
       });
 
       const thread = await openai.beta.threads.create({
-        messages: [{ role: "user", content: extractionPrompt }],
+        messages: [
+          {
+            role: "user",
+            content: extractionPrompt,
+            attachments: [{ file_id: f.id, tools: [{ type: "file_search" }] }],
+          },
+        ],
       });
 
       const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
@@ -472,9 +448,10 @@ exports.analyzeProductImage = async (req, res) => {
 
       if (run.status === "completed") {
         const msgs = await openai.beta.threads.messages.list(run.thread_id);
-        const match = msgs.data[0].content[0].text.value.match(/\{[\s\S]*\}/);
-        if (match) {
-          result = JSON.parse(match[0]);
+        const rawText = msgs.data[0].content[0].text.value;
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          result = JSON.parse(jsonMatch[0]);
         }
       }
 
@@ -483,10 +460,15 @@ exports.analyzeProductImage = async (req, res) => {
       await openai.beta.assistants.del(tempAssistant.id);
     }
 
+    if (isSheetByKeyword) {
+      result.isTechnicalSheet = true;
+    }
+
+    const isTech = String(result.isTechnicalSheet).toLowerCase() === "true";
+    result.isTechnicalSheet = isTech;
+
     if (email) {
-      const isTech = String(result.isTechnicalSheet).toLowerCase() === "true";
       await updateCounter(tenantId, email, isTech);
-      result.isTechnicalSheet = isTech;
     }
 
     res.status(200).json(result);
