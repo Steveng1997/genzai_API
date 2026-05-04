@@ -471,7 +471,21 @@ exports.analyzeProductImage = async (req, res) => {
       await updateCounter(tenantId, email, isTech);
     }
 
-    res.status(200).json(result);
+    const finalResponse = {
+      brand: result.brand || "",
+      reference: result.reference || "",
+      name: result.name || "",
+      productType: result.productType || "",
+      category: result.category || "",
+      color: result.color || "N/A",
+      description: result.description || "",
+      observations: result.observations || "",
+      segment: result.segment || "",
+      fuelType: result.fuelType || "",
+      isTechnicalSheet: isTech,
+    };
+
+    res.status(200).json(finalResponse);
   } catch (e) {
     console.error("❌ Error en analyzeProductImage:", e.message);
     res.status(500).json({ error: "Error procesando el análisis de la IA" });
