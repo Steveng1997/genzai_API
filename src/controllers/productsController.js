@@ -54,10 +54,10 @@ exports.createProduct = async (req, res) => {
       return res.status(400).json({ error: "tenantId is required" });
     }
 
-    let fileUrls = [];
-    let primaryPhotoUrl = "";
+    let fileUrls = req.body.fileUrls || [];
+    let primaryPhotoUrl = req.body.primaryPhotoUrl || "";
 
-    if (files && Array.isArray(files)) {
+    if (files && Array.isArray(files) && files.length > 0) {
       for (const file of files) {
         if (file.fileBase64 && file.fileName) {
           const buffer = Buffer.from(file.fileBase64, "base64");
@@ -77,8 +77,9 @@ exports.createProduct = async (req, res) => {
           if (file.isPrimary) primaryPhotoUrl = s3Url;
         }
       }
-      if (!primaryPhotoUrl && fileUrls.length > 0)
+      if (!primaryPhotoUrl && fileUrls.length > 0) {
         primaryPhotoUrl = fileUrls[0];
+      }
     }
 
     const productId = crypto.randomUUID();
