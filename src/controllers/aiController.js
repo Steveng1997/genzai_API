@@ -409,6 +409,8 @@ exports.analyzeProductImage = async (req, res) => {
     let result = { isTechnicalSheet: isSheetByKeyword };
     let primaryPhotoUrl = "";
 
+    const fileKey = `products/${tenantId.trim()}/img-${Date.now()}-${crypto.randomUUID()}.jpg`;
+
     if (isImage) {
       const base64Image = file.buffer.toString("base64");
       const resp = await openai.chat.completions.create({
@@ -435,7 +437,6 @@ exports.analyzeProductImage = async (req, res) => {
       if (result.crop) {
         try {
           const metadata = await sharp(file.buffer).metadata();
-
           const extractRegion = {
             left: Math.max(
               0,
@@ -461,8 +462,6 @@ exports.analyzeProductImage = async (req, res) => {
               .jpeg({ quality: 90 })
               .toBuffer();
 
-            const fileKey = `products/${tenantId.trim()}/crop-${Date.now()}-${crypto.randomUUID()}.jpg`;
-
             await s3Client.send(
               new PutObjectCommand({
                 Bucket: ACTUAL_BUCKET,
@@ -472,11 +471,27 @@ exports.analyzeProductImage = async (req, res) => {
               }),
             );
             primaryPhotoUrl = `https://${ACTUAL_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
-            console.log("✅ Imagen guardada en S3:", primaryPhotoUrl);
+            console.log("✅ Imagen recortada guardada en S3:", primaryPhotoUrl);
           }
-        } catch (sharpError) {
-          console.error("⚠️ Error procesando imagen/S3:", sharpError.message);
+        } catch (e) {
+          console.error("⚠️ Error en recorte (Sharp):", e.message);
         }
+      }
+
+      if (!primaryPhotoUrl) {
+        await s3Client.send(
+          new PutObjectCommand({
+            Bucket: ACTUAL_BUCKET,
+            Key: fileKey,
+            Body: file.buffer,
+            ContentType: file.mimetype,
+          }),
+        );
+        primaryPhotoUrl = `https://${ACTUAL_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+        console.log(
+          "✅ Imagen original guardada en S3 (fallback):",
+          primaryPhotoUrl,
+        );
       }
     } else if (isPDF) {
       const f = await openai.files.create({
@@ -523,9 +538,12 @@ exports.analyzeProductImage = async (req, res) => {
         }
       }
 
-      await openai.files.del(f.id);
-      await openai.beta.vectorStores.del(vs.id);
-      await openai.beta.assistants.del(tempAssistant.id);
+      // CORRECCIÓN: Limpieza en un solo bloque Promise.all para evitar duplicidad o errores
+      await Promise.all([
+        openai.files.del(f.id),
+        openai.beta.vectorStores.del(vs.id),
+        openai.beta.assistants.del(tempAssistant.id),
+      ]);
     }
 
     if (isSheetByKeyword) {
