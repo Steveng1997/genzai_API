@@ -582,9 +582,16 @@ exports.analyzeProductImage = async (req, res) => {
         const msgs = await openai.beta.threads.messages.list(run.thread_id);
         const rawText = msgs.data[0].content[0].text.value;
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+
         if (jsonMatch) {
           const assistantResult = JSON.parse(jsonMatch[0]);
-          result = { ...result, ...assistantResult };
+          
+          result = {
+            ...result,
+            ...assistantResult,
+            primaryPhotoUrl: primaryPhotoUrl,
+            fileUrls: [primaryPhotoUrl],
+          };
           console.log("[ASSISTANT]: Datos combinados correctamente.");
         }
       }
