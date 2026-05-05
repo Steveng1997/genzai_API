@@ -41,7 +41,6 @@ const updateCounter = async (tenantId, email, isTechnicalSheet) => {
         },
       }),
     );
-    console.log(`✅ CONTADOR: ${field} incrementado para ${email}`);
   } catch (error) {
     console.error("❌ Error DynamoDB Counter:", error.message);
   }
@@ -74,7 +73,6 @@ exports.getChatHistory = async (req, res) => {
     const threadId = Items?.[0]?.activeThreadId;
 
     if (!threadId) {
-      console.log("ℹ️ No hay historial previo para este tenant.");
       return res.status(200).json([]);
     }
 
@@ -89,7 +87,6 @@ exports.getChatHistory = async (req, res) => {
 
     res.status(200).json(history);
   } catch (e) {
-    console.error("❌ Error getChatHistory:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
@@ -191,7 +188,6 @@ exports.setupAssistant = async (req, res) => {
     const newFileNames = [];
 
     for (const file of files) {
-      console.log(`\n--- INICIO PROCESAMIENTO: ${file.originalname} ---`);
       let mimeTypeForOpenAI = file.mimetype;
       if (
         file.originalname.toLowerCase().endsWith(".pdf") &&
@@ -339,18 +335,14 @@ exports.setupAssistant = async (req, res) => {
     );
     res.status(200).json({ success: true, assistantId });
   } catch (e) {
-    console.error("❌ Error setupAssistant:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
 
 exports.analyzeProductImage = async (req, res) => {
   try {
-    console.log("--- [INICIO] PROCESO DE ANÁLISIS ---");
     const { tenantId, email } = req.body;
     const file = req.file;
-
-    console.log(`[DATOS RECIBIDOS]: Tenant: ${tenantId}, Email: ${email}`);
 
     if (!BUCKET_NAME || !file) {
       console.error(
@@ -365,18 +357,11 @@ exports.analyzeProductImage = async (req, res) => {
     let workingBuffer = file.buffer;
     let mimeTypeForOpenAI = file.mimetype;
 
-    console.log(
-      `[ARCHIVO]: Nombre: ${fileName}, MIME Original: ${file.mimetype}, Tamaño: ${file.size} bytes`,
-    );
-
     if (
       fileName.endsWith(".pdf") &&
       mimeTypeForOpenAI === "application/octet-stream"
     ) {
       mimeTypeForOpenAI = "application/pdf";
-      console.log(
-        "-> [MIME CORREGIDO]: application/pdf detectado por extensión",
-      );
     }
 
     const isPDF =
@@ -384,8 +369,6 @@ exports.analyzeProductImage = async (req, res) => {
     const isImage =
       mimeTypeForOpenAI.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(fileName);
-
-    console.log(`[TIPO DETECTADO]: isPDF: ${isPDF}, isImage: ${isImage}`);
 
     const sheetKeywords = [
       "ficha",
@@ -397,11 +380,6 @@ exports.analyzeProductImage = async (req, res) => {
       "hoja",
     ];
     const isSheetByKeyword = sheetKeywords.some((k) => fileName.includes(k));
-
-    if (isSheetByKeyword)
-      console.log(
-        "-> [KEYWORD DETECTADA]: El nombre del archivo sugiere una ficha técnica",
-      );
 
     const extractionPrompt = `
     Analiza el archivo adjunto y extrae la información para un inventario profesional.
@@ -437,9 +415,7 @@ exports.analyzeProductImage = async (req, res) => {
 
     const fileExtension = isPDF ? ".pdf" : ".jpg";
     const fileKey = `products/${tenantId.trim()}/img-${Date.now()}-${crypto.randomUUID()}${fileExtension}`;
-    console.log(`[S3 KEY GENERADA]: ${fileKey}`);
 
-    console.log("-> [S3]: Subiendo archivo original como respaldo...");
     await s3Client.send(
       new PutObjectCommand({
         Bucket: BUCKET_NAME,
@@ -449,7 +425,6 @@ exports.analyzeProductImage = async (req, res) => {
       }),
     );
     primaryPhotoUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
-    console.log(`✅ [S3 URL]: ${primaryPhotoUrl}`);
 
     if (isPDF) {
       console.log("-> [PDF]: Convirtiendo a imagen para detección de crop...");
@@ -466,9 +441,6 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     if (isImage || isPDF) {
-      console.log(
-        "-> [IA]: Enviando a GPT-4o Vision para análisis visual y crop...",
-      );
       const base64Image = workingBuffer.toString("base64");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
@@ -490,10 +462,8 @@ exports.analyzeProductImage = async (req, res) => {
       });
 
       result = JSON.parse(resp.choices[0].message.content);
-      console.log("[GPT RESULTADO]:", JSON.stringify(result, null, 2));
 
       if (result.crop) {
-        console.log("-> [SHARP]: Procesando recorte...");
         try {
           const metadata = await sharp(workingBuffer).metadata();
           const extractRegion = {
@@ -531,7 +501,6 @@ exports.analyzeProductImage = async (req, res) => {
               }),
             );
             primaryPhotoUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${croppedKey}`;
-            console.log("✅ [S3]: Imagen recortada guardada como principal.");
           }
         } catch (e) {
           console.error("⚠️ [SHARP ERROR]:", e.message);
@@ -540,9 +509,6 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     if (isPDF) {
-      console.log(
-        "-> [MODO]: Profundizando análisis con OpenAI Assistants para PDF...",
-      );
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
           type: mimeTypeForOpenAI,
@@ -585,14 +551,13 @@ exports.analyzeProductImage = async (req, res) => {
 
         if (jsonMatch) {
           const assistantResult = JSON.parse(jsonMatch[0]);
-          
+
           result = {
             ...result,
             ...assistantResult,
             primaryPhotoUrl: primaryPhotoUrl,
             fileUrls: [primaryPhotoUrl],
           };
-          console.log("[ASSISTANT]: Datos combinados correctamente.");
         }
       }
 
@@ -626,9 +591,7 @@ exports.analyzeProductImage = async (req, res) => {
       await updateCounter(tenantId, email, isTech);
     }
 
-    console.log("--- [FIN] PROCESO EXITOSO ---");
-
-    res.status(200).json({
+    const finalResponse = {
       brand: result.brand || "",
       reference: result.reference || "",
       name: finalName,
@@ -641,8 +604,16 @@ exports.analyzeProductImage = async (req, res) => {
       fuelType: result.fuelType || "",
       isTechnicalSheet: isTech,
       primaryPhotoUrl: primaryPhotoUrl,
-      fileUrls: [primaryPhotoUrl],
-    });
+      fileUrls: primaryPhotoUrl ? [primaryPhotoUrl] : [],
+    };
+
+    console.log(
+      "-> [DEBUG] Enviando al frontend:",
+      finalResponse.primaryPhotoUrl,
+      finalResponse,
+    );
+
+    res.status(200).json(finalResponse);
   } catch (e) {
     console.error("❌ [ERROR CRÍTICO GENERAL]:", e);
     if (!res.headersSent) {
