@@ -626,6 +626,7 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     console.log("--- [FIN] PROCESO EXITOSO ---");
+
     res.status(200).json({
       brand: result.brand || "",
       reference: result.reference || "",
@@ -641,8 +642,6 @@ exports.analyzeProductImage = async (req, res) => {
       primaryPhotoUrl: primaryPhotoUrl,
       fileUrls: [primaryPhotoUrl],
     });
-
-    console.log(`[RESULTADO]: ${JSON.stringify(res.status(200).json())}`);
   } catch (e) {
     console.error("❌ [ERROR CRÍTICO GENERAL]:", e);
     res
