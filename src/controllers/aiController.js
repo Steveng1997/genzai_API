@@ -338,17 +338,30 @@ exports.setupAssistant = async (req, res) => {
 
 exports.analyzeProductImage = async (req, res) => {
   try {
+    console.log("--- INICIO PROCESO ANALISIS ---");
     const { tenantId, email } = req.body;
     const file = req.file;
 
+    console.log("Body Params:", { tenantId, email });
+    console.log(
+      "File Info:",
+      file
+        ? { name: file.originalname, size: file.size, mime: file.mimetype }
+        : "No file",
+    );
+
     const ACTUAL_BUCKET = process.env.S3_BUCKET_NAME || BUCKET_NAME;
+    console.log("S3 Bucket:", ACTUAL_BUCKET);
 
     if (!ACTUAL_BUCKET) {
+      console.error("❌ ERROR: No hay nombre de Bucket");
       throw new Error("S3 Bucket name is missing in environment variables");
     }
 
-    if (!file)
+    if (!file) {
+      console.error("❌ ERROR: No se recibió archivo");
       return res.status(400).json({ error: "No se recibió ningún archivo" });
+    }
 
     const fileName = file.originalname.toLowerCase();
     let mimeTypeForOpenAI = file.mimetype;
@@ -358,6 +371,7 @@ exports.analyzeProductImage = async (req, res) => {
       mimeTypeForOpenAI === "application/octet-stream"
     ) {
       mimeTypeForOpenAI = "application/pdf";
+      console.log("PDF detectado y corregido mimeType");
     }
 
     const isPDF =
@@ -365,6 +379,8 @@ exports.analyzeProductImage = async (req, res) => {
     const isImage =
       mimeTypeForOpenAI.startsWith("image/") ||
       /\.(jpg|jpeg|png|webp)$/.test(fileName);
+
+    console.log("Detección Tipo:", { isPDF, isImage });
 
     const sheetKeywords = [
       "ficha",
@@ -410,8 +426,10 @@ exports.analyzeProductImage = async (req, res) => {
     let primaryPhotoUrl = "";
 
     const fileKey = `products/${tenantId.trim()}/img-${Date.now()}-${crypto.randomUUID()}.jpg`;
+    console.log("FileKey Generada:", fileKey);
 
     if (isImage) {
+      console.log("Enviando Imagen a OpenAI...");
       const base64Image = file.buffer.toString("base64");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
@@ -433,10 +451,17 @@ exports.analyzeProductImage = async (req, res) => {
       });
 
       result = JSON.parse(resp.choices[0].message.content);
+      console.log("Resultado OpenAI (Imagen):", result);
 
       if (result.crop) {
+        console.log("Intentando Recorte con Sharp. Coordenadas:", result.crop);
         try {
           const metadata = await sharp(file.buffer).metadata();
+          console.log("Sharp Metadata:", {
+            w: metadata.width,
+            h: metadata.height,
+          });
+
           const extractRegion = {
             left: Math.max(
               0,
@@ -456,12 +481,15 @@ exports.analyzeProductImage = async (req, res) => {
             ),
           };
 
+          console.log("Region de extracción calculada:", extractRegion);
+
           if (extractRegion.width > 0 && extractRegion.height > 0) {
             const croppedBuffer = await sharp(file.buffer)
               .extract(extractRegion)
               .jpeg({ quality: 90 })
               .toBuffer();
 
+            console.log("Buffer recortado listo. Subiendo a S3...");
             await s3Client.send(
               new PutObjectCommand({
                 Bucket: ACTUAL_BUCKET,
@@ -471,14 +499,22 @@ exports.analyzeProductImage = async (req, res) => {
               }),
             );
             primaryPhotoUrl = `https://${ACTUAL_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
-            console.log("✅ Imagen recortada guardada en S3:", primaryPhotoUrl);
+            console.log(
+              "✅ Imagen recortada guardada exitosamente:",
+              primaryPhotoUrl,
+            );
+          } else {
+            console.warn("⚠️ Region de recorte inválida (ancho o alto <= 0)");
           }
         } catch (e) {
-          console.error("⚠️ Error en recorte (Sharp):", e.message);
+          console.error("⚠️ Error en proceso de recorte Sharp:", e.message);
         }
       }
 
       if (!primaryPhotoUrl) {
+        console.log(
+          "Sin URL de recorte. Intentando subir imagen original (fallback)...",
+        );
         await s3Client.send(
           new PutObjectCommand({
             Bucket: ACTUAL_BUCKET,
@@ -488,23 +524,23 @@ exports.analyzeProductImage = async (req, res) => {
           }),
         );
         primaryPhotoUrl = `https://${ACTUAL_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
-        console.log(
-          "✅ Imagen original guardada en S3 (fallback):",
-          primaryPhotoUrl,
-        );
+        console.log("✅ Imagen original guardada en S3:", primaryPhotoUrl);
       }
     } else if (isPDF) {
+      console.log("Enviando PDF a OpenAI Assistants...");
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
           type: mimeTypeForOpenAI,
         }),
         purpose: "assistants",
       });
+      console.log("Archivo subido a OpenAI:", f.id);
 
       const vs = await openai.beta.vectorStores.create({
         name: `Temp-Analyze-${uuidv4()}`,
         file_ids: [f.id],
       });
+      console.log("VectorStore creado:", vs.id);
 
       const tempAssistant = await openai.beta.assistants.create({
         name: "Data Extractor",
@@ -532,13 +568,17 @@ exports.analyzeProductImage = async (req, res) => {
       if (run.status === "completed") {
         const msgs = await openai.beta.threads.messages.list(run.thread_id);
         const rawText = msgs.data[0].content[0].text.value;
+        console.log("Texto Crudo Assistant:", rawText);
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           result = JSON.parse(jsonMatch[0]);
+          console.log("JSON Parseado Assistant:", result);
         }
+      } else {
+        console.warn("⚠️ Run no completado. Status:", run.status);
       }
 
-      // CORRECCIÓN: Limpieza en un solo bloque Promise.all para evitar duplicidad o errores
+      console.log("Limpiando recursos de OpenAI Assistants...");
       await Promise.all([
         openai.files.del(f.id),
         openai.beta.vectorStores.del(vs.id),
@@ -548,6 +588,7 @@ exports.analyzeProductImage = async (req, res) => {
 
     if (isSheetByKeyword) {
       result.isTechnicalSheet = true;
+      console.log("Ficha técnica forzada por keyword en nombre de archivo");
     }
 
     let finalName = result.name || "";
@@ -566,9 +607,11 @@ exports.analyzeProductImage = async (req, res) => {
     result.isTechnicalSheet = isTech;
 
     if (email) {
+      console.log("Actualizando contador para:", email);
       await updateCounter(tenantId, email, isTech);
     }
 
+    console.log("--- PROCESO FINALIZADO EXITOSAMENTE ---");
     res.status(200).json({
       brand: result.brand || "",
       reference: result.reference || "",
@@ -584,7 +627,7 @@ exports.analyzeProductImage = async (req, res) => {
       primaryPhotoUrl: primaryPhotoUrl,
     });
   } catch (e) {
-    console.error("❌ Error General:", e.message);
+    console.error("❌ ERROR GENERAL CAPTURADO:", e.message);
     res.status(500).json({ error: "Error procesando el análisis" });
   }
 };
