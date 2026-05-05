@@ -8,6 +8,7 @@ const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const crypto = require("crypto");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const BUCKET_NAME = process.env.S3_BUCKET_PRODUCTS;
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
 
