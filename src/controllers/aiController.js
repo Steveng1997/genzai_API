@@ -639,7 +639,10 @@ exports.analyzeProductImage = async (req, res) => {
       fuelType: result.fuelType || "",
       isTechnicalSheet: isTech,
       primaryPhotoUrl: primaryPhotoUrl,
+      fileUrls: [primaryPhotoUrl],
     });
+
+    console.log(`[RESULTADO]: ${JSON.stringify(res.status(200).json())}`);
   } catch (e) {
     console.error("❌ [ERROR CRÍTICO GENERAL]:", e);
     res
