@@ -4,10 +4,17 @@ const { UpdateCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
 const sharp = require("sharp");
-const { PutObjectCommand } = require("@aws-sdk/client-s3");
+
+const {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} = require("@aws-sdk/client-s3");
+
 const crypto = require("crypto");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const s3Client = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET_NAME = process.env.S3_BUCKET_PRODUCTS;
 const TABLE_CONFIGS = process.env.DYNAMODB_TABLE_AI;
 const TABLE_USERS = process.env.DYNAMODB_TABLE_USERS;
@@ -344,9 +351,7 @@ exports.analyzeProductImage = async (req, res) => {
 
     console.log(`[DATOS RECIBIDOS]: Tenant: ${tenantId}, Email: ${email}`);
 
-    const ACTUAL_BUCKET = process.env.S3_BUCKET_NAME || BUCKET_NAME;
-
-    if (!ACTUAL_BUCKET || !file) {
+    if (!BUCKET_NAME || !file) {
       console.error(
         "❌ [ERROR]: Configuración de S3 o archivo inexistente en el request",
       );
@@ -438,13 +443,13 @@ exports.analyzeProductImage = async (req, res) => {
     console.log("-> [S3]: Subiendo archivo original como respaldo...");
     await s3Client.send(
       new PutObjectCommand({
-        Bucket: ACTUAL_BUCKET,
+        Bucket: BUCKET_NAME,
         Key: fileKey,
         Body: file.buffer,
         ContentType: mimeTypeForOpenAI,
       }),
     );
-    primaryPhotoUrl = `https://${ACTUAL_BUCKET}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
+    primaryPhotoUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
     console.log(`✅ [S3 URL]: ${primaryPhotoUrl}`);
 
     if (isImage) {
@@ -514,7 +519,7 @@ exports.analyzeProductImage = async (req, res) => {
             );
             await s3Client.send(
               new PutObjectCommand({
-                Bucket: ACTUAL_BUCKET,
+                Bucket: BUCKET_NAME,
                 Key: fileKey,
                 Body: croppedBuffer,
                 ContentType: "image/jpeg",
