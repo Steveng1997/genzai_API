@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require("uuid");
 const { UpdateCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const dynamoDB = require("../services/dynamo");
 
+const { pdf } = require("pdf-to-img");
 const sharp = require("sharp");
 
 const {
@@ -361,13 +362,13 @@ exports.analyzeProductImage = async (req, res) => {
     }
 
     const fileName = file.originalname.toLowerCase();
+    let workingBuffer = file.buffer;
     let mimeTypeForOpenAI = file.mimetype;
 
     console.log(
       `[ARCHIVO]: Nombre: ${fileName}, MIME Original: ${file.mimetype}, Tamaño: ${file.size} bytes`,
     );
 
-    // Corrección de MIME para PDFs mal identificados
     if (
       fileName.endsWith(".pdf") &&
       mimeTypeForOpenAI === "application/octet-stream"
@@ -410,7 +411,7 @@ exports.analyzeProductImage = async (req, res) => {
     - Si no encuentras la referencia o el modelo, NO los inventes, simplemente usa los datos disponibles.
     - Formato preferido: "[Marca] [Referencia/Modelo]".
 
-   ### COLUMNAS A LLENAR (Obligatorio):
+    ### COLUMNAS A LLENAR (Obligatorio):
     1. brand: Marca del producto.
     2. reference: Referencia de fábrica o código alfanumérico.
     3. name: Nombre comercial más descriptivo encontrado.
@@ -422,8 +423,8 @@ exports.analyzeProductImage = async (req, res) => {
     9. segment: (Solo autos) Segmento (ej: SUV, Sedán, Hatchback). Si no es auto, usa "".
     10. fuelType: (Solo autos) Combustible (ej: Gasolina, Diésel, Eléctrico). Si no es auto, usa "".
     
-    ### RECORTE (Solo imágenes):
-    Si hay una foto principal, devuelve coordenadas en "crop": {"x", "y", "width", "height"} (0-1000).
+    ### RECORTE (Importante):
+    Si hay una foto principal del producto, devuelve coordenadas en "crop": {"x", "y", "width", "height"} (valores 0-1000).
     
     ### REGLA DE VALIDACIÓN PARA isTechnicalSheet:
     - isTechnicalSheet: Debe ser TRUE si el documento contiene tablas técnicas, medidas, especificaciones de ingeniería o componentes detallados. FALSE si es solo publicidad visual.
@@ -434,12 +435,10 @@ exports.analyzeProductImage = async (req, res) => {
     let result = { isTechnicalSheet: isSheetByKeyword };
     let primaryPhotoUrl = "";
 
-    // Generar Key única
     const fileExtension = isPDF ? ".pdf" : ".jpg";
     const fileKey = `products/${tenantId.trim()}/img-${Date.now()}-${crypto.randomUUID()}${fileExtension}`;
     console.log(`[S3 KEY GENERADA]: ${fileKey}`);
 
-    // SUBIDA INICIAL (Respaldo)
     console.log("-> [S3]: Subiendo archivo original como respaldo...");
     await s3Client.send(
       new PutObjectCommand({
@@ -452,9 +451,25 @@ exports.analyzeProductImage = async (req, res) => {
     primaryPhotoUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${fileKey}`;
     console.log(`✅ [S3 URL]: ${primaryPhotoUrl}`);
 
-    if (isImage) {
-      console.log("-> [MODO]: Procesando como IMAGEN con GPT-4o Vision...");
-      const base64Image = file.buffer.toString("base64");
+    if (isPDF) {
+      console.log("-> [PDF]: Convirtiendo a imagen para detección de crop...");
+      try {
+        const document = await pdf(file.buffer, { scale: 2 });
+        for await (const page of document) {
+          workingBuffer = page;
+          break;
+        }
+        console.log("✅ Primera página de PDF convertida a buffer de imagen.");
+      } catch (pdfErr) {
+        console.error("⚠️ Error convirtiendo PDF a imagen:", pdfErr.message);
+      }
+    }
+
+    if (isImage || isPDF) {
+      console.log(
+        "-> [IA]: Enviando a GPT-4o Vision para análisis visual y crop...",
+      );
+      const base64Image = workingBuffer.toString("base64");
       const resp = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -465,7 +480,7 @@ exports.analyzeProductImage = async (req, res) => {
               {
                 type: "image_url",
                 image_url: {
-                  url: `data:${file.mimetype};base64,${base64Image}`,
+                  url: `data:image/jpeg;base64,${base64Image}`,
                 },
               },
             ],
@@ -478,15 +493,9 @@ exports.analyzeProductImage = async (req, res) => {
       console.log("[GPT RESULTADO]:", JSON.stringify(result, null, 2));
 
       if (result.crop) {
-        console.log(
-          "-> [SHARP]: Coordenadas de recorte recibidas. Iniciando procesamiento...",
-        );
+        console.log("-> [SHARP]: Procesando recorte...");
         try {
-          const metadata = await sharp(file.buffer).metadata();
-          console.log(
-            `[SHARP METADATA]: Original: ${metadata.width}x${metadata.height}, Formato: ${metadata.format}`,
-          );
-
+          const metadata = await sharp(workingBuffer).metadata();
           const extractRegion = {
             left: Math.max(
               0,
@@ -497,58 +506,54 @@ exports.analyzeProductImage = async (req, res) => {
               Math.round((result.crop.y / 1000) * metadata.height),
             ),
             width: Math.min(
-              metadata.width - 1,
+              metadata.width,
               Math.round((result.crop.width / 1000) * metadata.width),
             ),
             height: Math.min(
-              metadata.height - 1,
+              metadata.height,
               Math.round((result.crop.height / 1000) * metadata.height),
             ),
           };
 
-          console.log(`[SHARP REGION]: ${JSON.stringify(extractRegion)}`);
-
           if (extractRegion.width > 0 && extractRegion.height > 0) {
-            const croppedBuffer = await sharp(file.buffer)
+            const croppedBuffer = await sharp(workingBuffer)
               .extract(extractRegion)
               .jpeg({ quality: 90 })
               .toBuffer();
 
-            console.log(
-              "-> [S3]: Sobrescribiendo archivo en S3 con la versión recortada...",
-            );
+            const croppedKey = fileKey.replace(fileExtension, "-cropped.jpg");
             await s3Client.send(
               new PutObjectCommand({
                 Bucket: BUCKET_NAME,
-                Key: fileKey,
+                Key: croppedKey,
                 Body: croppedBuffer,
                 ContentType: "image/jpeg",
               }),
             );
-            console.log("✅ [S3]: Recorte guardado exitosamente");
+            primaryPhotoUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/${croppedKey}`;
+            console.log("✅ [S3]: Imagen recortada guardada como principal.");
           }
         } catch (e) {
-          console.error(
-            "⚠️ [SHARP ERROR]: Error recortando la imagen:",
-            e.message,
-          );
+          console.error("⚠️ [SHARP ERROR]:", e.message);
         }
       }
-    } else if (isPDF) {
-      console.log("-> [MODO]: Procesando como PDF con OpenAI Assistants...");
+    }
+
+    if (isPDF) {
+      console.log(
+        "-> [MODO]: Profundizando análisis con OpenAI Assistants para PDF...",
+      );
       const f = await openai.files.create({
         file: await OpenAI.toFile(file.buffer, file.originalname, {
           type: mimeTypeForOpenAI,
         }),
         purpose: "assistants",
       });
-      console.log(`[OPENAI FILE ID]: ${f.id}`);
 
       const vs = await openai.beta.vectorStores.create({
         name: `Temp-${uuidv4()}`,
         file_ids: [f.id],
       });
-      console.log(`[VECTOR STORE ID]: ${vs.id}`);
 
       const tempAssistant = await openai.beta.assistants.create({
         name: "Data Extractor",
@@ -569,7 +574,6 @@ exports.analyzeProductImage = async (req, res) => {
         ],
       });
 
-      console.log("-> [OPENAI]: Ejecutando Assistant Run...");
       const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
         assistant_id: tempAssistant.id,
       });
@@ -579,16 +583,12 @@ exports.analyzeProductImage = async (req, res) => {
         const rawText = msgs.data[0].content[0].text.value;
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          result = JSON.parse(jsonMatch[0]);
-          console.log("[ASSISTANT RESULTADO]: JSON extraído correctamente");
+          const assistantResult = JSON.parse(jsonMatch[0]);
+          result = { ...result, ...assistantResult };
+          console.log("[ASSISTANT]: Datos combinados correctamente.");
         }
-      } else {
-        console.error(
-          `❌ [OPENAI ERROR]: Run finalizó con status: ${run.status}`,
-        );
       }
 
-      console.log("-> [LIMPIEZA]: Eliminando archivos temporales de OpenAI...");
       await Promise.all([
         openai.files.del(f.id),
         openai.beta.vectorStores.del(vs.id),
@@ -596,10 +596,8 @@ exports.analyzeProductImage = async (req, res) => {
       ]);
     }
 
-    // LÓGICA DE NOMBRE Y CONTADORES
     if (isSheetByKeyword) {
       result.isTechnicalSheet = true;
-      console.log("Ficha técnica forzada por keyword en nombre de archivo");
     }
 
     let finalName = result.name || "";
@@ -616,12 +614,8 @@ exports.analyzeProductImage = async (req, res) => {
 
     const isTech = String(result.isTechnicalSheet).toLowerCase() === "true";
     result.isTechnicalSheet = isTech;
-    console.log(
-      `[VALIDACIÓN FINAL]: isTechnicalSheet = ${isTech}, Name: ${finalName}`,
-    );
 
     if (email) {
-      console.log(`-> [DATABASE]: Actualizando contador para ${email}...`);
       await updateCounter(tenantId, email, isTech);
     }
 
@@ -644,8 +638,10 @@ exports.analyzeProductImage = async (req, res) => {
     });
   } catch (e) {
     console.error("❌ [ERROR CRÍTICO GENERAL]:", e);
-    res
-      .status(500)
-      .json({ error: "Error procesando el análisis", message: e.message });
+    if (!res.headersSent) {
+      res
+        .status(500)
+        .json({ error: "Error procesando el análisis", message: e.message });
+    }
   }
 };
