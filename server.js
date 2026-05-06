@@ -36,6 +36,7 @@ app.use("/api/plan", require("./src/routes/plan"));
 app.use("/api/products", require("./src/routes/products"));
 app.use("/api/services", require("./src/routes/services"));
 app.use("/api/vapi", require("./src/routes/vapi"));
+app.use("/api/support", require("./src/routes/support"));
 
 // --- MANEJO DE ERRORES ---
 
