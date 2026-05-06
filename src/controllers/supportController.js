@@ -1,5 +1,5 @@
 const dynamoDB = require("../services/dynamo");
-const { PutCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb");
+const { PutCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
 const crypto = require("crypto");
 
 exports.saveSupportQuery = async (req, res) => {
@@ -38,25 +38,19 @@ exports.saveSupportQuery = async (req, res) => {
 };
 
 exports.getAllSupportTickets = async (req, res) => {
-  const { tenantId, search } = req.query;
-
-  if (!tenantId) {
-    return res.status(400).json({ message: "tenantId requerido" });
-  }
+  const { search } = req.query;
 
   try {
     const response = await dynamoDB.send(
-      new QueryCommand({
+      new ScanCommand({
         TableName: "SupportTickets",
-        KeyConditionExpression: "tenantId = :t",
-        ExpressionAttributeValues: {
-          ":t": tenantId.trim(),
-        },
-        ScanIndexForward: false,
       }),
     );
 
     let tickets = response.Items || [];
+
+    tickets.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
     const mainTickets = tickets.filter((t) => t.isMain === true).slice(0, 10);
 
     if (search) {
