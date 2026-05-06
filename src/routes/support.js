@@ -4,6 +4,5 @@ const supportController = require("../controllers/supportController");
 
 router.post("/save", supportController.saveSupportQuery);
 router.get("/all", supportController.getAllSupportTickets);
-router.get("/by-plan", supportController.getSupportByPlan);
 
 module.exports = router;

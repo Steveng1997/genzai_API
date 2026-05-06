@@ -1,13 +1,9 @@
 const dynamoDB = require("../services/dynamo");
-const {
-  PutCommand,
-  QueryCommand,
-  ScanCommand,
-} = require("@aws-sdk/lib-dynamodb");
+const { PutCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb");
 const crypto = require("crypto");
 
 exports.saveSupportQuery = async (req, res) => {
-  const { tenantId, question, answer, currentPlan } = req.body;
+  const { tenantId, question, answer, isMain } = req.body;
 
   if (!tenantId || !question) {
     return res
@@ -24,9 +20,8 @@ exports.saveSupportQuery = async (req, res) => {
       ticketId: ticketId,
       question: question.trim(),
       answer: answer || "Sin respuesta",
-      currentPlan: currentPlan || "N/A",
+      isMain: isMain || false,
       createdAt: timestamp,
-      status: "COMPLETED",
     };
 
     await dynamoDB.send(
@@ -43,7 +38,7 @@ exports.saveSupportQuery = async (req, res) => {
 };
 
 exports.getAllSupportTickets = async (req, res) => {
-  const { tenantId } = req.query;
+  const { tenantId, search } = req.query;
 
   if (!tenantId) {
     return res.status(400).json({ message: "tenantId requerido" });
@@ -61,36 +56,22 @@ exports.getAllSupportTickets = async (req, res) => {
       }),
     );
 
-    res.status(200).json(response.Items || []);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-};
+    let tickets = response.Items || [];
+    const mainTickets = tickets.filter((t) => t.isMain === true).slice(0, 10);
 
-exports.getSupportByPlan = async (req, res) => {
-  const { tenantId, currentPlan } = req.query;
+    if (search) {
+      const searchTerm = search.toLowerCase().trim();
 
-  if (!tenantId || !currentPlan) {
-    return res
-      .status(400)
-      .json({ message: "tenantId y currentPlan requeridos" });
-  }
+      const filteredTickets = tickets.filter(
+        (t) =>
+          t.question.toLowerCase().includes(searchTerm) && t.isMain !== true,
+      );
 
-  try {
-    const response = await dynamoDB.send(
-      new QueryCommand({
-        TableName: "SupportTickets",
-        KeyConditionExpression: "tenantId = :t",
-        FilterExpression: "currentPlan = :p",
-        ExpressionAttributeValues: {
-          ":t": tenantId.trim(),
-          ":p": currentPlan.trim(),
-        },
-        ScanIndexForward: false,
-      }),
-    );
+      const results = [...mainTickets, ...filteredTickets];
+      return res.status(200).json(results);
+    }
 
-    res.status(200).json(response.Items || []);
+    res.status(200).json(tickets);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
