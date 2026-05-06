@@ -51,7 +51,7 @@ exports.getAllSupportTickets = async (req, res) => {
 
     tickets.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    const mainTickets = tickets.filter((t) => t.isMain === true).slice(0, 10);
+    const mainTickets = tickets.filter((t) => t.isMain === true);
 
     if (search) {
       const searchTerm = search.toLowerCase().trim();
@@ -65,7 +65,7 @@ exports.getAllSupportTickets = async (req, res) => {
       return res.status(200).json(results);
     }
 
-    res.status(200).json(tickets);
+    res.status(200).json(mainTickets);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
