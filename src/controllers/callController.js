@@ -16,13 +16,10 @@ exports.makeSmartCall = async (req, res) => {
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
 
-  console.log(`🚀 Iniciando makeSmartCall para tenantId: ${tenantId}`);
-
   try {
     if (!tenantId)
       return res.status(400).json({ message: "tenantId requerido" });
 
-    // 1. Verificar disponibilidad de minutos
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -36,7 +33,6 @@ exports.makeSmartCall = async (req, res) => {
         .json({ success: false, message: "Sin minutos disponibles" });
     }
 
-    // 2. Obtener configuración del agente
     const { Items: configs } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CONFIGS,
@@ -47,9 +43,7 @@ exports.makeSmartCall = async (req, res) => {
 
     let config = configs?.[0];
 
-    // 🤖 CREACIÓN AUTOMÁTICA DE ASISTENTE EN VAPI (SI NO EXISTE)
     if (!config?.assistantId && config?.openaiAssistantId) {
-      console.log("🤖 Configurando nuevo asistente en Vapi...");
       try {
         const vapiRes = await axios.post(
           "https://api.vapi.ai/assistant",
@@ -58,6 +52,7 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
+              tools: [{ type: "file_search" }],
               messages: [
                 {
                   role: "system",
@@ -86,10 +81,9 @@ exports.makeSmartCall = async (req, res) => {
           }),
         );
         config.assistantId = newVapiId;
-        console.log(`✅ Asistente Vapi vinculado: ${newVapiId}`);
       } catch (vapiErr) {
         console.error(
-          "❌ Error en creación de asistente:",
+          "❌ Error creación Vapi:",
           vapiErr.response?.data || vapiErr.message,
         );
       }
@@ -101,7 +95,6 @@ exports.makeSmartCall = async (req, res) => {
         .json({ message: "Configuración de Vapi no encontrada." });
     }
 
-    // 3. Obtener clientes con llamadas activas
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -111,9 +104,7 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     if (!customers || customers.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No hay clientes activos para procesar." });
+      return res.status(404).json({ message: "No hay clientes activos." });
     }
 
     const now = new Date();
@@ -130,7 +121,6 @@ exports.makeSmartCall = async (req, res) => {
           ? "Buenas noches"
           : "Buenos días";
 
-    // 4. Disparar llamadas en paralelo
     const callPromises = customers.map(async (customer) => {
       try {
         const rawPhone = customer.phone.toString().replace(/\s+/g, "");
@@ -149,6 +139,39 @@ exports.makeSmartCall = async (req, res) => {
             silenceTimeoutSeconds: 30,
             maxDurationSeconds: 600,
             backchannelingEnabled: true,
+            model: {
+              provider: "openai",
+              model: "gpt-4o",
+              toolIds: [config.openaiAssistantId],
+              tools: [
+                {
+                  type: "file_search",
+                  fileSearch: {
+                    maxNumResults: 5,
+                  },
+                },
+              ],
+              messages: [
+                {
+                  role: "system",
+                  content: `Eres Riley, experta vendedora de autos de ${company}. 
+                  
+                  INSTRUCCIÓN DINAMOV:
+                  - Tienes archivos PDF cargados con inventario y fichas técnicas.
+                  - Para cualquier duda técnica de autos (motor, torque, airbags, medidas), USA la herramienta 'file_search'.
+                  - No inventes. Si no está en el documento, di que lo consultarás con un asesor humano.
+                  - Si la búsqueda tarda, di: "Permíteme un segundo, estoy verificando el dato exacto en la ficha técnica".
+                  
+                  REGLAS:
+                  - Hoy es ${fechaHoy}.
+                  - Precios siempre en palabras.
+                  - Si acuerdas cita, usa obligatoriamente 'create_task'.
+                  
+                  DATOS create_task:
+                  - tenantId: "${tenantId}", clientId: "${customer.clientId}", customerName: "${customer.fullName}", company: "${company}".`,
+                },
+              ],
+            },
             analysisPlan: {
               structuredDataSchema: {
                 type: "object",
@@ -302,10 +325,6 @@ exports.makeSmartCall = async (req, res) => {
 
         return response.data;
       } catch (err) {
-        console.error(
-          `❌ Error en llamada a ${customer.fullName}:`,
-          err.response?.data || err.message,
-        );
         return { error: true, customer: customer.fullName };
       }
     });
@@ -313,7 +332,6 @@ exports.makeSmartCall = async (req, res) => {
     const results = await Promise.all(callPromises);
     res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error("🔥 Error crítico:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
