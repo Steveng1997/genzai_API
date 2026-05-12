@@ -167,7 +167,8 @@ exports.makeSmartCall = async (req, res) => {
 
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
-          // CORRECCIÓN: Usamos el ID del asistente configurado para este tenant
+          // SOLUCIÓN: Usamos el ID del asistente de VAPI creado para este tenant.
+          // Este asistente YA TIENE vinculado el knowledgeBase de OpenAI.
           assistantId: config.assistantId || MASTER_ASSISTANT_ID,
           metadata: {
             tenantId: tenantId,
@@ -186,8 +187,9 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CORRECCIÓN: Para OpenAI Assistants en overrides, el ID va aquí directamente:
-              assistantId: config.openaiAssistantId,
+              // CORRECCIÓN: Se eliminaron 'assistantId' y 'knowledgeBase' de aquí.
+              // Vapi no permite sobrescribirlos en los overrides de una llamada.
+              // Riley heredará automáticamente el conocimiento del asistente definido en la línea 159.
               tools: [
                 {
                   type: "function",
