@@ -171,6 +171,11 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
+              // Se inyecta el conocimiento técnico mediante vectorStoreIds para no generar error 400
+              knowledgeBase: {
+                provider: "openai",
+                assistantId: config.openaiAssistantId,
+              },
               tools: [
                 {
                   type: "function",
