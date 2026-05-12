@@ -135,13 +135,12 @@ exports.makeSmartCall = async (req, res) => {
     const colombiaDate = new Date(
       new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }),
     );
-    const hour = colombiaDate.getHours();
     const fechaHoy = colombiaDate.toISOString().split("T")[0];
 
     let tempGreeting =
-      hour >= 12 && hour < 18
+      colombiaDate.getHours() >= 12 && colombiaDate.getHours() < 18
         ? "Buenas tardes"
-        : hour >= 18 || hour < 5
+        : colombiaDate.getHours() >= 18 || colombiaDate.getHours() < 5
           ? "Buenas noches"
           : "Buenos días";
 
@@ -171,11 +170,8 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // Se inyecta el conocimiento técnico mediante vectorStoreIds para no generar error 400
-              knowledgeBase: {
-                provider: "openai",
-                assistantId: config.openaiAssistantId,
-              },
+              // Vapi usa este assistantId para heredar el conocimiento (PDFs) de OpenAI
+              assistantId: config.openaiAssistantId,
               tools: [
                 {
                   type: "function",
@@ -218,7 +214,7 @@ exports.makeSmartCall = async (req, res) => {
               messages: [
                 {
                   role: "system",
-                  content: `Eres Riley, la asistente virtual de la empresa ${company}. Tu tono es amable, profesional y sobre todo, muy humano. Olvida tecnicismos robóticos. Hoy es ${fechaHoy}.
+                  content: `Eres Riley, la asistente virtual de la empresa ${company}. Tu tono es amable, profesional y muy humano. Olvida tecnicismos robóticos. Hoy es ${fechaHoy}.
 
                   PERSONALIDAD Y SALUDO:
                   - Saluda de forma natural: "${tempGreeting} ${customer.fullName}, ¿cómo se encuentra hoy?".
@@ -228,12 +224,12 @@ exports.makeSmartCall = async (req, res) => {
                   MANEJO DE CONOCIMIENTO (PDF):
                   - Si el cliente pregunta por el inventario o detalles de un auto, busca en tus registros.
                   - Mientras buscas, di frases naturales como: "Claro, permítame un segundito miro qué tengo disponible para usted..." o "Déjeme revisar rápidamente qué modelos nos quedan...".
-                  - REGLA CRÍTICA: Si tras buscar en los archivos NO encuentras información o no hay fichas técnicas cargadas, di amablemente: "Por el momento no cuento con el inventario detallado aquí, pero si gusta, puedo pedirle a un asesor humano que le envíe la información actualizada por WhatsApp ahora mismo".
+                  - REGLA CRÍTICA: Si tras buscar en los archivos NO encuentras información, di amablemente: "Por el momento no cuento con el inventario detallado aquí, pero si gusta, puedo pedirle a un asesor humano que le envíe la información actualizada por WhatsApp ahora mismo".
 
                   REGLAS ADICIONALES:
                   1. PRECIOS: Siempre díselos en palabras (ej: "Veinte millones de pesos").
                   2. EMPATÍA: Escucha las necesidades del cliente antes de ofrecer modelos.
-                  3. CIERRE: Antes de agendar la cita, consulta cuál sería su método de pago preferido.
+                  3. CIERRE: Antes de agendar la cita, consulta cuál sería su método de pago preferido (Efectivo, crédito, etc).
 
                   AGENDAMIENTO:
                   - Usa 'create_task' solo si el cliente confirma un día y hora para la cita.
