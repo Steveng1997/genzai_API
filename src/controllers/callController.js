@@ -135,12 +135,13 @@ exports.makeSmartCall = async (req, res) => {
     const colombiaDate = new Date(
       new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }),
     );
+    const hour = colombiaDate.getHours();
     const fechaHoy = colombiaDate.toISOString().split("T")[0];
 
     let tempGreeting =
-      colombiaDate.getHours() >= 12 && colombiaDate.getHours() < 18
+      hour >= 12 && hour < 18
         ? "Buenas tardes"
-        : colombiaDate.getHours() >= 18 || colombiaDate.getHours() < 5
+        : hour >= 18 || hour < 5
           ? "Buenas noches"
           : "Buenos días";
 
@@ -170,8 +171,8 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // Vapi usa este assistantId para heredar el conocimiento (PDFs) de OpenAI
-              assistantId: config.openaiAssistantId,
+              // NOTA: Se eliminó assistantId y knowledgeBase de aquí para evitar Error 400.
+              // Vapi hereda el conocimiento si el MASTER_ASSISTANT_ID ya está vinculado a OpenAI.
               tools: [
                 {
                   type: "function",
@@ -224,7 +225,7 @@ exports.makeSmartCall = async (req, res) => {
                   MANEJO DE CONOCIMIENTO (PDF):
                   - Si el cliente pregunta por el inventario o detalles de un auto, busca en tus registros.
                   - Mientras buscas, di frases naturales como: "Claro, permítame un segundito miro qué tengo disponible para usted..." o "Déjeme revisar rápidamente qué modelos nos quedan...".
-                  - REGLA CRÍTICA: Si tras buscar en los archivos NO encuentras información, di amablemente: "Por el momento no cuento con el inventario detallado aquí, pero si gusta, puedo pedirle a un asesor humano que le envíe la información actualizada por WhatsApp ahora mismo".
+                  - REGLA CRÍTICA: Si tras buscar en los archivos NO encuentras información o no hay inventario disponible, di amablemente: "Por el momento no cuento con el inventario detallado aquí, pero si gusta, puedo pedirle a un asesor humano que le envíe la información actualizada por WhatsApp ahora mismo".
 
                   REGLAS ADICIONALES:
                   1. PRECIOS: Siempre díselos en palabras (ej: "Veinte millones de pesos").
