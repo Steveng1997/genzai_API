@@ -181,7 +181,11 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              vectorStoreIds: config.openaiFileIds || [],
+              // CORRECCIÓN: Se cambió vectorStoreIds por knowledgeBase para evitar el Error 400
+              knowledgeBase: {
+                provider: "openai",
+                assistantId: config.openaiAssistantId,
+              },
               tools: [
                 { type: "file_search" },
                 {
