@@ -30,7 +30,7 @@ const getNextStep = (currentStatus) => {
     Cierre: "venta finalizada",
     Pérdida: "Ninguno",
   };
-  return steps[currentStatus] || "SIN DEFINIR";
+  return steps[currentStatus] || "Seguimiento manual";
 };
 
 const parseRelativeDate = (text) => {
@@ -189,19 +189,27 @@ exports.handleVapiWebhook = async (req, res) => {
       !failureReasons.includes(endedReason) && rawDuration > 10;
 
     const structured = analysis?.structuredData || {};
-    let negotiationStatus = structured.status || "No_contesto";
-    let progress = Number(structured.progress || 0);
-    const nextStep = getNextStep(negotiationStatus);
+
+    let negotiationStatus =
+      structured.status || (toolCall ? "Cita" : "No_contesto");
+    let progress =
+      structured.progress !== undefined
+        ? Number(structured.progress)
+        : toolCall
+          ? 70
+          : 0;
+    let nextStep = structured.nextStep || getNextStep(negotiationStatus);
+    let priority = structured.priority || "Media";
+    let rawCita = toolArgs.cita || structured.cita || "No definida";
+
     const finalSummaryText =
       structured.description || vapiSummary || "Sin resumen disponible.";
-
-    const rawCita = toolArgs.cita || structured.cita || "No definida";
 
     await dynamoDB.send(
       new PutCommand({
         TableName: TABLE_HISTORY,
         Item: {
-          idConsumptionHistory : String(call?.id || Date.now()),
+          idConsumptionHistory: String(call?.id || Date.now()),
           tenantId: tenantId ? String(tenantId).trim() : "SIN_TENANT",
           clientId: clientId ? String(clientId).trim() : "N/A",
           customerName,
@@ -242,7 +250,10 @@ exports.handleVapiWebhook = async (req, res) => {
 
     if (wasAnswered && userEmail && userEmail !== "sin-email") {
       const { Item: user } = await dynamoDB.send(
-        new GetCommand({ TableName: TABLE_USERS, Key: { email: userEmail } }),
+        new GetCommand({
+          TableName: TABLE_USERS,
+          Key: { tenantId: String(tenantId).trim(), email: userEmail },
+        }),
       );
       if (user) {
         const minutesToSubtract = Math.max(1, Math.round(rawDuration / 60));
@@ -252,7 +263,7 @@ exports.handleVapiWebhook = async (req, res) => {
         );
         await dynamoDB.send(
           new UpdateCommand({
-            Key: { email: userEmail },
+            Key: { tenantId: String(tenantId).trim(), email: userEmail },
             TableName: TABLE_USERS,
             UpdateExpression: "SET availableMinutes = :m",
             ExpressionAttributeValues: { ":m": finalMinutes },
@@ -281,7 +292,7 @@ exports.handleVapiWebhook = async (req, res) => {
             lastInteraction: globalInteractionDate,
             status: negotiationStatus,
             progress: progress,
-            priority: structured.priority,
+            priority: priority,
             cita: parseRelativeDate(rawCita),
             nextStep: nextStep,
             source: "Vapi Webhook",

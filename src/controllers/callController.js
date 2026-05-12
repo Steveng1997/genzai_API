@@ -18,19 +18,11 @@ exports.makeSmartCall = async (req, res) => {
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
 
-  console.log("--------------------------------------------------");
-  console.log("🚀 [INICIO] Petición recibida para makeSmartCall");
-  console.log(
-    `📡 Datos: Company: ${company}, Email: ${email}, TenantId: ${tenantId}`,
-  );
-
   try {
     if (!tenantId) {
-      console.error("❌ [ERROR] tenantId es requerido en el body");
       return res.status(400).json({ message: "tenantId requerido" });
     }
 
-    console.log("🔍 [1/5] Verificando minutos del usuario...");
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -38,19 +30,12 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    console.log(
-      `📊 Minutos disponibles encontrados: ${userDoc?.availableMinutes ?? "N/A"}`,
-    );
     if ((userDoc?.availableMinutes || 0) <= 0) {
-      console.error("🚫 [BLOQUEO] Usuario sin minutos disponibles.");
       return res
         .status(403)
         .json({ success: false, message: "Sin minutos disponibles" });
     }
 
-    console.log(
-      "🔍 [2/5] Buscando configuración del agente (TABLE_CONFIGS)...",
-    );
     const { Items: configs } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CONFIGS,
@@ -60,12 +45,8 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     let config = configs?.[0];
-    console.log(`⚙️ Configuración obtenida: ${config ? "EXITOSA" : "VACÍA"}`);
 
     if (!config?.assistantId && config?.openaiAssistantId) {
-      console.log(
-        "🤖 [AUTO-SETUP] AssistantId no existe en Vapi. Intentando crear...",
-      );
       try {
         const vapiRes = await axios.post(
           "https://api.vapi.ai/assistant",
@@ -89,7 +70,6 @@ exports.makeSmartCall = async (req, res) => {
         );
 
         const newVapiId = vapiRes.data.id;
-        console.log(`✅ [VAPI] Nuevo asistente creado con ID: ${newVapiId}`);
 
         await dynamoDB.send(
           new UpdateCommand({
@@ -102,22 +82,18 @@ exports.makeSmartCall = async (req, res) => {
         config.assistantId = newVapiId;
       } catch (vapiErr) {
         console.error(
-          "❌ [VAPI ERROR] Falló creación automática:",
+          "❌ Error creación automática:",
           vapiErr.response?.data || vapiErr.message,
         );
       }
     }
 
     if (!config?.assistantId) {
-      console.error(
-        "❌ [ERROR CRÍTICO] No se encontró assistantId para llamar.",
-      );
       return res
         .status(404)
         .json({ message: "Configuración de Vapi no encontrada." });
     }
 
-    console.log("🔍 [3/5] Buscando clientes con 'call_active: true'...");
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -126,14 +102,13 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
-    console.log(`👥 Clientes a procesar: ${customers?.length || 0}`);
     if (!customers || customers.length === 0) {
-      console.warn("⚠️ [ADVERTENCIA] No hay clientes con call_active=true.");
       return res.status(404).json({ message: "No hay clientes activos." });
     }
 
+    const now = new Date();
     const colombiaDate = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }),
+      now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
     );
     const hour = colombiaDate.getHours();
     const fechaHoy = colombiaDate.toISOString().split("T")[0];
@@ -145,7 +120,6 @@ exports.makeSmartCall = async (req, res) => {
           ? "Buenas noches"
           : "Buenos días";
 
-    console.log("📲 [4/5] Iniciando bucle de llamadas...");
     const callPromises = customers.map(async (customer) => {
       try {
         const rawPhone = (customer.phone || "").toString().replace(/\s+/g, "");
@@ -153,13 +127,15 @@ exports.makeSmartCall = async (req, res) => {
           ? rawPhone
           : `+57${rawPhone}`;
 
-        console.log(
-          `📞 Intentando llamar a ${customer.fullName} al número ${formattedPhone}`,
-        );
-
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
           assistantId: MASTER_ASSISTANT_ID,
+          metadata: {
+            tenantId: tenantId,
+            clientId: customer.clientId,
+            company: company,
+            email: email,
+          },
           phoneNumberId:
             config.vapiPhoneNumberId || "59d1cef7-80b8-4dfa-9a14-1394df3bc97a",
           assistantOverrides: {
@@ -171,8 +147,6 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // NOTA: Se eliminó assistantId y knowledgeBase de aquí para evitar Error 400.
-              // Vapi hereda el conocimiento si el MASTER_ASSISTANT_ID ya está vinculado a OpenAI.
               tools: [
                 {
                   type: "function",
@@ -272,22 +246,14 @@ exports.makeSmartCall = async (req, res) => {
           },
         };
 
-        console.log("📤 [VAPI] Enviando Payload...");
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           vapiPayload,
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
 
-        console.log(
-          `✅ [VAPI SUCCESS] Llamada iniciada para ${customer.fullName}. CallId: ${response.data.id}`,
-        );
         return response.data;
       } catch (err) {
-        console.error(
-          `❌ [ERROR LLAMADA] Falló para ${customer.fullName}:`,
-          err.response?.data || err.message,
-        );
         return {
           error: true,
           customer: customer.fullName,
@@ -296,12 +262,9 @@ exports.makeSmartCall = async (req, res) => {
       }
     });
 
-    console.log("⏳ [5/5] Esperando a que todas las peticiones terminen...");
     const results = await Promise.all(callPromises);
-    console.log("🏁 [FIN] Todas las peticiones de llamada han sido enviadas.");
     res.status(200).json({ success: true, results });
   } catch (e) {
-    console.error("🔥 [FATAL ERROR] Error general en el servidor:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
