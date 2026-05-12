@@ -74,7 +74,7 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              tools: [{ type: "file_search" }],
+              tools: [],
               messages: [
                 {
                   role: "system",
@@ -132,19 +132,10 @@ exports.makeSmartCall = async (req, res) => {
       return res.status(404).json({ message: "No hay clientes activos." });
     }
 
-    const now = new Date();
     const colombiaDate = new Date(
-      now.toLocaleString("en-US", { timeZone: "America/Bogota" }),
+      new Date().toLocaleString("en-US", { timeZone: "America/Bogota" }),
     );
-    const hour = colombiaDate.getHours();
     const fechaHoy = colombiaDate.toISOString().split("T")[0];
-
-    let tempGreeting =
-      hour >= 12 && hour < 18
-        ? "Buenas tardes"
-        : hour >= 18 || hour < 5
-          ? "Buenas noches"
-          : "Buenos días";
 
     console.log("📲 [4/5] Iniciando bucle de llamadas...");
     const callPromises = customers.map(async (customer) => {
@@ -172,11 +163,9 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // NOTA: Se eliminó assistantId de aquí porque el esquema de Vapi 400 indica que no debe existir en el override del model
+              // NOTA: No incluimos assistantId de OpenAI aquí porque genera conflicto 400 en overrides.
+              // Usamos el conocimiento vía el prompt y las herramientas definidas.
               tools: [
-                {
-                  type: "file_search",
-                },
                 {
                   type: "function",
                   messages: [
@@ -218,22 +207,22 @@ exports.makeSmartCall = async (req, res) => {
               messages: [
                 {
                   role: "system",
-                  content: `Eres Riley, experta vendedora de autos de ${company}.
-                  
-                  INSTRUCCIÓN DINAMOV:
-                  - Tienes archivos PDF cargados con inventario y fichas técnicas.
-                  - Para cualquier duda técnica de autos (motor, torque, airbags, medidas), USA la herramienta 'file_search'.
-                  - IMPORTANTE: Mientras el sistema busca en los archivos, DEBES DECIR: "Un momento por favor, estoy verificando los detalles técnicos en mi sistema..." para mantener la llamada activa.
-                  - No inventes. Si no está en el documento, di que lo consultarás con un asesor humano.
-                  - Si la búsqueda tarda, di: "Sigo aquí, estoy verificando el dato exacto en la ficha técnica".
-                  
-                  REGLAS:
-                  - Hoy es ${fechaHoy}.
-                  - Precios siempre en palabras.
-                  - Si acuerdas cita, usa obligatoriamente 'create_task'.
-                  
-                  DATOS create_task:
-                  - tenantId: "${tenantId}", clientId: "${customer.clientId}", customerName: "${customer.fullName}", company: "${company}".`,
+                  content: `Eres Riley, experta vendedora de autos profesional de la empresa ${company}. Hoy es ${fechaHoy}.
+
+                  ACCESO A DOCUMENTOS (CRÍTICO):
+                  - Tienes archivos cargados con inventario y fichas técnicas en tu asistente base.
+                  - Si el cliente pregunta por detalles técnicos, busca en tu conocimiento.
+                  - IMPORTANTE: Mientras buscas, DEBES DECIR: "Un momento por favor, estoy verificando los detalles técnicos en mi sistema..." para evitar silencios.
+                  - NUNCA inventes datos. Si el sistema tarda, di: "Sigo aquí, verificando la ficha técnica...".
+
+                  REGLAS DE ORO:
+                  1. EMPATÍA Y SONDEO: Saluda y sondea necesidades.
+                  2. PRECIOS: Siempre en palabras.
+                  3. NO COLGAR: Mantén al cliente informado.
+
+                  AGENDAMIENTO DE CITAS:
+                  - Usa obligatoriamente 'create_task' si se acuerda la cita.
+                  - DATOS: tenantId: "${tenantId}", clientId: "${customer.clientId}", customerName: "${customer.fullName}", company: "${company}".`,
                 },
               ],
             },
@@ -253,25 +242,11 @@ exports.makeSmartCall = async (req, res) => {
                       "Cierre",
                       "Pérdida",
                     ],
-                    description:
-                      "El estado actual de la venta basado en la interacción.",
                   },
-                  progress: {
-                    type: "number",
-                    description: "Avance 0-100 según el estado definido.",
-                  },
-                  description: {
-                    type: "string",
-                    description: "Resumen detallado de la conversación.",
-                  },
-                  priority: {
-                    type: "string",
-                    enum: ["Baja", "Media", "Alta"],
-                  },
-                  cita: {
-                    type: "string",
-                    description: "Fecha/hora acordada o 'No definida'.",
-                  },
+                  progress: { type: "number" },
+                  description: { type: "string" },
+                  priority: { type: "string", enum: ["Baja", "Media", "Alta"] },
+                  cita: { type: "string" },
                 },
                 required: [
                   "status",
