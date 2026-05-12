@@ -18,11 +18,19 @@ exports.makeSmartCall = async (req, res) => {
   email = (email || "").toLowerCase().trim();
   tenantId = (tenantId || "").trim();
 
+  console.log("--------------------------------------------------");
+  console.log("🚀 [INICIO] Petición recibida para makeSmartCall");
+  console.log(
+    `📡 Datos entrada: Company: ${company}, Email: ${email}, TenantId: ${tenantId}`,
+  );
+
   try {
     if (!tenantId) {
+      console.error("❌ [ERROR] tenantId es requerido");
       return res.status(400).json({ message: "tenantId requerido" });
     }
 
+    console.log("🔍 [1/6] Verificando minutos del usuario en TABLE_USERS...");
     const { Item: userDoc } = await dynamoDB.send(
       new GetCommand({
         TableName: TABLE_USERS,
@@ -30,12 +38,17 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
+    console.log(
+      `📊 Minutos encontrados: ${userDoc?.availableMinutes ?? "N/A"}`,
+    );
     if ((userDoc?.availableMinutes || 0) <= 0) {
+      console.error("🚫 [BLOQUEO] Usuario sin minutos disponibles.");
       return res
         .status(403)
         .json({ success: false, message: "Sin minutos disponibles" });
     }
 
+    console.log("🔍 [2/6] Buscando configuración en TABLE_CONFIGS...");
     const { Items: configs } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CONFIGS,
@@ -45,8 +58,14 @@ exports.makeSmartCall = async (req, res) => {
     );
 
     let config = configs?.[0];
+    console.log(
+      `⚙️ Configuración obtenida: ${config ? "EXISTE" : "NO EXISTE"}`,
+    );
 
     if (!config?.assistantId && config?.openaiAssistantId) {
+      console.log(
+        "🤖 [AUTO-SETUP] assistantId no existe. Intentando crear asistente en Vapi...",
+      );
       try {
         const vapiRes = await axios.post(
           "https://api.vapi.ai/assistant",
@@ -70,6 +89,7 @@ exports.makeSmartCall = async (req, res) => {
         );
 
         const newVapiId = vapiRes.data.id;
+        console.log(`✅ [VAPI] Nuevo asistente creado con ID: ${newVapiId}`);
 
         await dynamoDB.send(
           new UpdateCommand({
@@ -80,20 +100,27 @@ exports.makeSmartCall = async (req, res) => {
           }),
         );
         config.assistantId = newVapiId;
+        console.log("📝 [DYNAMO] assistantId actualizado en la base de datos.");
       } catch (vapiErr) {
         console.error(
-          "❌ Error creación automática:",
+          "❌ [ERROR VAPI SETUP]:",
           vapiErr.response?.data || vapiErr.message,
         );
       }
     }
 
     if (!config?.assistantId) {
+      console.error(
+        "❌ [ERROR] No hay assistantId disponible para realizar llamadas.",
+      );
       return res
         .status(404)
         .json({ message: "Configuración de Vapi no encontrada." });
     }
 
+    console.log(
+      "🔍 [3/6] Buscando clientes con call_active=true en TABLE_CLIENTS...",
+    );
     const { Items: customers } = await dynamoDB.send(
       new ScanCalls({
         TableName: TABLE_CLIENTS,
@@ -102,7 +129,9 @@ exports.makeSmartCall = async (req, res) => {
       }),
     );
 
+    console.log(`👥 Clientes activos encontrados: ${customers?.length || 0}`);
     if (!customers || customers.length === 0) {
+      console.warn("⚠️ [AVISO] No hay clientes para llamar.");
       return res.status(404).json({ message: "No hay clientes activos." });
     }
 
@@ -120,12 +149,17 @@ exports.makeSmartCall = async (req, res) => {
           ? "Buenas noches"
           : "Buenos días";
 
+    console.log("📲 [4/6] Iniciando promesas de llamadas...");
     const callPromises = customers.map(async (customer) => {
       try {
         const rawPhone = (customer.phone || "").toString().replace(/\s+/g, "");
         const formattedPhone = rawPhone.startsWith("+")
           ? rawPhone
           : `+57${rawPhone}`;
+
+        console.log(
+          `📞 Llamando a: ${customer.fullName} (${formattedPhone})...`,
+        );
 
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
@@ -147,8 +181,6 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CAMBIO CLAVE: Usamos vectorStoreIds en lugar de assistantId para evitar Error 400
-              // Vapi inyectará los archivos mediante estos IDs al modelo gpt-4o.
               vectorStoreIds: config.openaiFileIds || [],
               tools: [
                 { type: "file_search" },
@@ -249,14 +281,24 @@ exports.makeSmartCall = async (req, res) => {
           },
         };
 
+        console.log(
+          `📤 [VAPI] Enviando petición de llamada para ${customer.fullName}...`,
+        );
         const response = await axios.post(
           "https://api.vapi.ai/call/phone",
           vapiPayload,
           { headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` } },
         );
 
+        console.log(
+          `✅ [EXITO] Llamada iniciada para ${customer.fullName}. ID: ${response.data.id}`,
+        );
         return response.data;
       } catch (err) {
+        console.error(
+          `❌ [ERROR EN LLAMADA] Falló para ${customer.fullName}:`,
+          err.response?.data || err.message,
+        );
         return {
           error: true,
           customer: customer.fullName,
@@ -265,9 +307,13 @@ exports.makeSmartCall = async (req, res) => {
       }
     });
 
+    console.log("⏳ [5/6] Esperando resolución de todas las llamadas...");
     const results = await Promise.all(callPromises);
+
+    console.log("🏁 [6/6] Proceso finalizado.");
     res.status(200).json({ success: true, results });
   } catch (e) {
+    console.error("🔥 [FATAL ERROR] Error general en el servidor:", e.message);
     res.status(500).json({ error: e.message });
   }
 };
