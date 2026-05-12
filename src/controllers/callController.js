@@ -74,7 +74,12 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              tools: [{ type: "file_search" }],
+              // CORRECCIÓN: Eliminado type: "file_search" de aquí también si se usa knowledgeBase
+              tools: [],
+              knowledgeBase: {
+                provider: "openai",
+                assistantId: config.openaiAssistantId,
+              },
               messages: [
                 {
                   role: "system",
@@ -181,13 +186,13 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CORRECCIÓN: Se cambió vectorStoreIds por knowledgeBase para evitar el Error 400
+              // CONTEXTO: knowledgeBase vincula los archivos del asistente de OpenAI correctamente
               knowledgeBase: {
                 provider: "openai",
                 assistantId: config.openaiAssistantId,
               },
+              // CORRECCIÓN: Se eliminó { type: "file_search" } porque causa Error 400 en Vapi
               tools: [
-                { type: "file_search" },
                 {
                   type: "function",
                   messages: [
