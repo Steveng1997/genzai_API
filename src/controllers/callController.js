@@ -74,7 +74,6 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CORRECCIÓN: Eliminado type: "file_search" de aquí también si se usa knowledgeBase
               tools: [],
               knowledgeBase: {
                 provider: "openai",
@@ -168,7 +167,8 @@ exports.makeSmartCall = async (req, res) => {
 
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
-          assistantId: MASTER_ASSISTANT_ID,
+          // CORRECCIÓN: Usamos el ID del asistente configurado para este tenant
+          assistantId: config.assistantId || MASTER_ASSISTANT_ID,
           metadata: {
             tenantId: tenantId,
             clientId: customer.clientId,
@@ -186,12 +186,8 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CONTEXTO: knowledgeBase vincula los archivos del asistente de OpenAI correctamente
-              knowledgeBase: {
-                provider: "openai",
-                assistantId: config.openaiAssistantId,
-              },
-              // CORRECCIÓN: Se eliminó { type: "file_search" } porque causa Error 400 en Vapi
+              // CORRECCIÓN: Para OpenAI Assistants en overrides, el ID va aquí directamente:
+              assistantId: config.openaiAssistantId,
               tools: [
                 {
                   type: "function",
