@@ -181,7 +181,6 @@ exports.makeSmartCall = async (req, res) => {
 
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
-          // Al usar config.assistantId, Vapi hereda automágicamente el knowledgeBase de OpenAI configurado en el paso 2
           assistantId: config.assistantId || MASTER_ASSISTANT_ID,
           metadata: {
             tenantId: tenantId,
@@ -200,12 +199,6 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CORRECCIÓN FINAL CONOCIMIENTO: Se removió el bloque inválido de knowledgeBase de los overrides.
-              // Para asegurar la lectura del PDF de OpenAI sin romper la API, usamos la propiedad nativa 'vectorStoreIds'
-              // de forma directa en el modelo si existe en tu config, o dejamos que actúe el asistente del auto-setup por defecto.
-              ...(config.openaiFileIds && {
-                vectorStoreIds: config.openaiFileIds,
-              }),
               tools: [
                 {
                   type: "function",
