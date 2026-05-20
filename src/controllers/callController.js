@@ -74,7 +74,7 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              tools: [],
+              tools: [{ type: "file_search" }],
               knowledgeBase: {
                 provider: "openai",
                 assistantId: config.openaiAssistantId,
@@ -165,10 +165,20 @@ exports.makeSmartCall = async (req, res) => {
           `📞 Llamando a: ${customer.fullName} (${formattedPhone})...`,
         );
 
+        // Extraemos el estado actual del cliente (por defecto 'Contacto' si no existe)
+        const currentStatus = customer.status || "Contacto";
+        console.log(
+          `ℹ️ [ESTADO CLIENTE] El cliente ${customer.fullName} está en la etapa: ${currentStatus}`,
+        );
+
+        // Construcción de instrucción dinámica según el flujo previo del cliente
+        let flowContextInstruction = "";
+        if (currentStatus !== "Contacto" && currentStatus !== "No_contesto") {
+          flowContextInstruction = `\n- CONTEXTO HISTÓRICO CRÍTICO: Ya has hablado con este cliente anteriormente y ya conoces sus preferencias (qué carro busca o qué catálogo solicitó). Su estado actual en el embudo es "${currentStatus}". NO vuelvas a pedirle datos repetitivos ni a indagar qué modelo desea desde cero. Salúdalo cordialmente y avanza directamente hacia el siguiente paso lógico, enfocado en resolver dudas pendientes, afinar los números o ir a la fase de NEGOCIACIÓN/AGENDAMIENTO.`;
+        }
+
         const vapiPayload = {
           customer: { number: formattedPhone, name: customer.fullName },
-          // SOLUCIÓN: Usamos el ID del asistente de VAPI creado para este tenant.
-          // Este asistente YA TIENE vinculado el knowledgeBase de OpenAI.
           assistantId: config.assistantId || MASTER_ASSISTANT_ID,
           metadata: {
             tenantId: tenantId,
@@ -187,10 +197,14 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // CORRECCIÓN: Se eliminaron 'assistantId' y 'knowledgeBase' de aquí.
-              // Vapi no permite sobrescribirlos en los overrides de una llamada.
-              // Riley heredará automáticamente el conocimiento del asistente definido en la línea 159.
+              // SOLUCIÓN PDF: Vinculamos correctamente el knowledgeBase en el override respetando la API de Vapi
+              knowledgeBase: {
+                provider: "openai",
+                assistantId: config.openaiAssistantId,
+              },
               tools: [
+                // SOLUCIÓN PDF: Re-activamos la herramienta obligatoria para que gpt-4o ejecute la búsqueda semántica
+                { type: "file_search" },
                 {
                   type: "function",
                   messages: [
@@ -232,7 +246,7 @@ exports.makeSmartCall = async (req, res) => {
               messages: [
                 {
                   role: "system",
-                  content: `Eres Riley, la asistente virtual de la empresa ${company}. Tu tono es amable, profesional y muy humano. Olvida tecnicismos robóticos. Hoy es ${fechaHoy}.
+                  content: `Eres Riley, la asistente virtual de la empresa ${company}. Tu tono es amable, profesional y muy humano. Olvida tecnicismos robóticos. Hoy es ${fechaHoy}.${flowContextInstruction}
 
                   PERSONALIDAD Y SALUDO:
                   - Saluda de forma natural: "${tempGreeting} ${customer.fullName}, ¿cómo se encuentra hoy?".
