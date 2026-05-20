@@ -165,15 +165,17 @@ exports.makeSmartCall = async (req, res) => {
           `📞 Llamando a: ${customer.fullName} (${formattedPhone})...`,
         );
 
-        // Extraemos el estado actual del cliente (por defecto 'Contacto' si no existe)
         const currentStatus = customer.status || "Contacto";
         console.log(
           `ℹ️ [ESTADO CLIENTE] El cliente ${customer.fullName} está en la etapa: ${currentStatus}`,
         );
 
-        // Construcción de instrucción dinámica según el flujo previo del cliente
         let flowContextInstruction = "";
-        if (currentStatus !== "Contacto" && currentStatus !== "No_contesto") {
+        if (
+          currentStatus !== "Contacto" &&
+          currentStatus !== "No_contesto" &&
+          currentStatus !== "NUEVO"
+        ) {
           flowContextInstruction = `\n- CONTEXTO HISTÓRICO CRÍTICO: Ya has hablado con este cliente anteriormente y ya conoces sus preferencias (qué carro busca o qué catálogo solicitó). Su estado actual en el embudo es "${currentStatus}". NO vuelvas a pedirle datos repetitivos ni a indagar qué modelo desea desde cero. Salúdalo cordialmente y avanza directamente hacia el siguiente paso lógico, enfocado en resolver dudas pendientes, afinar los números o ir a la fase de NEGOCIACIÓN/AGENDAMIENTO.`;
         }
 
@@ -197,14 +199,13 @@ exports.makeSmartCall = async (req, res) => {
             model: {
               provider: "openai",
               model: "gpt-4o",
-              // SOLUCIÓN PDF: Vinculamos correctamente el knowledgeBase en el override respetando la API de Vapi
               knowledgeBase: {
                 provider: "openai",
                 assistantId: config.openaiAssistantId,
               },
+              // CORRECCIÓN: Se quitó { type: "file_search" } de este array porque la API de llamadas salientes no lo acepta.
+              // El conocimiento se inyecta mediante el objeto knowledgeBase configurado arriba y en el auto-setup.
               tools: [
-                // SOLUCIÓN PDF: Re-activamos la herramienta obligatoria para que gpt-4o ejecute la búsqueda semántica
-                { type: "file_search" },
                 {
                   type: "function",
                   messages: [
